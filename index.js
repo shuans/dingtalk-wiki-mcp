@@ -52,6 +52,64 @@ function loadEnvFile(filePath) {
   return true;
 }
 
+function getElementsText(elements) {
+  if (!elements || !Array.isArray(elements)) return '';
+  return elements.map(el => {
+    if (el.textRun?.content) return el.textRun.content;
+    if (el.paragraphRun?.richText?.elements) return getElementsText(el.paragraphRun.richText.elements);
+    return '';
+  }).join('');
+}
+
+function extractBlockText(block) {
+  const getText = () => {
+    switch (block.blockType) {
+      case 'paragraph':
+        return getElementsText(block.paragraph?.richText?.elements);
+      case 'heading': {
+        const level = block.heading?.headingType || 1;
+        const headingText = getElementsText(block.heading?.richText?.elements);
+        return `${'#'.repeat(level)} ${headingText}`;
+      }
+      case 'table': {
+        const table = block.table;
+        if (!table?.cells) return '[空表格]';
+        const cellTexts = table.cells.map(cell => {
+          const cellBlocks = cell.blocks || [];
+          return cellBlocks.map(cb => extractBlockText(cb)).join(' | ');
+        });
+        const colCount = table.columnsCount || (table.cells[0]?.blocks?.length || 1);
+        const rows = [];
+        let currentRow = [];
+        cellTexts.forEach((t, i) => {
+          currentRow.push(t);
+          if (currentRow.length === colCount) {
+            rows.push(currentRow.join(' | '));
+            currentRow = [];
+          }
+        });
+        if (currentRow.length) rows.push(currentRow.join(' | '));
+        return rows.map(r => `| ${r} |`).join('\n');
+      }
+      case 'unorderedList':
+        return `• ${getElementsText(block.unorderedList?.richText?.elements)}`;
+      case 'orderedList':
+        return `1. ${getElementsText(block.orderedList?.richText?.elements)}`;
+      case 'blockquote':
+        return `> ${getElementsText(block.blockquote?.richText?.elements)}`;
+      case 'codeBlock':
+        return '```\n' + getElementsText(block.codeBlock?.richText?.elements) + '\n```';
+      case 'divider':
+        return '---';
+      case 'image':
+        return `[图片: ${block.image?.caption || ''}]`;
+      default:
+        return `[${block.blockType}] ${getElementsText(block.paragraph?.richText?.elements)}`;
+    }
+  };
+  return getText();
+}
+
 const DOTENV_CANDIDATES = [
   process.env.DINGTALK_WIKI_ENV_PATH,
   path.join(process.cwd(), '.env'),
@@ -226,6 +284,33 @@ class DingTalkClient {
     }
 
     return this.operatorId;
+  }
+
+  async docRequest(method, pathName, { operatorId = null, data = null } = {}) {
+    const token = await this.getAccessToken();
+    const resolvedOperatorId = await this.resolveOperatorId(operatorId);
+    const url = `${DINGTALK_API_V2}${pathName}`;
+
+    try {
+      const response = await axios({
+        method,
+        url,
+        headers: {
+          'x-acs-dingtalk-access-token': token,
+          'Content-Type': 'application/json'
+        },
+        params: {
+          operatorId: resolvedOperatorId
+        },
+        data
+      });
+      return response.data;
+    } catch (error) {
+      if (error.response) {
+        throw new Error(`${error.response.data?.message || error.message} (code: ${error.response.data?.code})`);
+      }
+      throw error;
+    }
   }
 
   async notableRequest(method, pathName, { operatorId = null, params = {}, data = null } = {}) {
@@ -474,6 +559,255 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             }
           },
           required: ['userid']
+        }
+      },
+      {
+        name: 'get_wiki_doc_content',
+        description: '读取文档正文内容（返回 Block 结构，含标题、段落、表格等）',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            doc_key: {
+              type: 'string',
+              description: '文档 docKey。wiki nodes 返回的 nodeId 本质是 dentryUuid，可直接用于此处'
+            },
+            operator_id: {
+              type: 'string',
+              description: '操作者 unionid（不传则使用默认用户）'
+            }
+          },
+          required: ['doc_key']
+        }
+      },
+      {
+        name: 'update_wiki_doc_content',
+        description: '覆写文档正文内容（⚠️ 全量覆盖，不可撤销）',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            doc_key: {
+              type: 'string',
+              description: '文档 docKey。wiki nodes 返回的 nodeId 本质是 dentryUuid，可直接用于此处'
+            },
+            content: {
+              type: 'string',
+              description: '要写入的 Markdown 内容'
+            },
+            operator_id: {
+              type: 'string',
+              description: '操作者 unionid（不传则使用默认用户）'
+            }
+          },
+          required: ['doc_key', 'content']
+        }
+      },
+      {
+        name: 'rename_wiki_doc',
+        description: '重命名文档',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workspace_id: {
+              type: 'string',
+              description: '知识库工作空间 ID'
+            },
+            node_id: {
+              type: 'string',
+              description: '节点 ID（重命名的目标文档）'
+            },
+            name: {
+              type: 'string',
+              description: '新的文档名称'
+            },
+            operator_id: {
+              type: 'string',
+              description: '操作者 unionid（不传则使用默认用户）'
+            }
+          },
+          required: ['workspace_id', 'node_id', 'name']
+        }
+      },
+      {
+        name: 'delete_wiki_doc',
+        description: '删除文档节点',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workspace_id: {
+              type: 'string',
+              description: '知识库工作空间 ID'
+            },
+            node_id: {
+              type: 'string',
+              description: '节点 ID（要删除的目标文档）'
+            },
+            operator_id: {
+              type: 'string',
+              description: '操作者 unionid（不传则使用默认用户）'
+            }
+          },
+          required: ['workspace_id', 'node_id']
+        }
+      },
+      {
+        name: 'create_notable_record',
+        description: '在 AI 表格数据表中创建一条或多条记录',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            base_id: {
+              type: 'string',
+              description: 'Notable baseId'
+            },
+            sheet_id: {
+              type: 'string',
+              description: '数据表 ID 或名称，可通过 list_notable_sheets 获取'
+            },
+            records: {
+              type: 'array',
+              description: '要创建的记录数组。每条记录为 { fields: { 字段名: 值 } }',
+              items: {
+                type: 'object',
+                properties: {
+                  fields: {
+                    type: 'object',
+                    description: '字段名到字段值的映射'
+                  }
+                },
+                required: ['fields']
+              }
+            },
+            operator_id: {
+              type: 'string',
+              description: '操作者 unionid（不传则使用默认用户）'
+            }
+          },
+          required: ['base_id', 'sheet_id', 'records']
+        }
+      },
+      {
+        name: 'update_notable_record',
+        description: '更新 AI 表格数据表中的多条记录',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            base_id: {
+              type: 'string',
+              description: 'Notable baseId'
+            },
+            sheet_id: {
+              type: 'string',
+              description: '数据表 ID 或名称'
+            },
+            records: {
+              type: 'array',
+              description: '要更新的记录数组。每条记录格式为 { id: "recordId", fields: { 字段名: 值 } }',
+              items: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                    description: '记录 ID'
+                  },
+                  fields: {
+                    type: 'object',
+                    description: '要更新的字段'
+                  }
+                },
+                required: ['id', 'fields']
+              }
+            },
+            operator_id: {
+              type: 'string',
+              description: '操作者 unionid（不传则使用默认用户）'
+            }
+          },
+          required: ['base_id', 'sheet_id', 'records']
+        }
+      },
+      {
+        name: 'delete_notable_record',
+        description: '删除 AI 表格数据表中的多条记录',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            base_id: {
+              type: 'string',
+              description: 'Notable baseId'
+            },
+            sheet_id: {
+              type: 'string',
+              description: '数据表 ID 或名称'
+            },
+            record_ids: {
+              type: 'array',
+              description: '要删除的记录 ID 列表',
+              items: {
+                type: 'string'
+              }
+            },
+            operator_id: {
+              type: 'string',
+              description: '操作者 unionid（不传则使用默认用户）'
+            }
+          },
+          required: ['base_id', 'sheet_id', 'record_ids']
+        }
+      },
+      {
+        name: 'create_notable_sheet',
+        description: '在 AI 表格中创建一个新的数据表',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            base_id: {
+              type: 'string',
+              description: 'Notable baseId'
+            },
+            name: {
+              type: 'string',
+              description: '数据表名称'
+            },
+            fields: {
+              type: 'array',
+              description: '数据表字段配置（可选），格式: [{ name: "字段名", type: "字段类型", property: {} }]',
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string', description: '字段名' },
+                  type: { type: 'string', description: '字段类型，如 Text, Number, Select 等' }
+                },
+                required: ['name', 'type']
+              }
+            },
+            operator_id: {
+              type: 'string',
+              description: '操作者 unionid（不传则使用默认用户）'
+            }
+          },
+          required: ['base_id', 'name']
+        }
+      },
+      {
+        name: 'delete_notable_sheet',
+        description: '删除 AI 表格中的一个数据表',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            base_id: {
+              type: 'string',
+              description: 'Notable baseId'
+            },
+            sheet_id: {
+              type: 'string',
+              description: '数据表 ID 或名称'
+            },
+            operator_id: {
+              type: 'string',
+              description: '操作者 unionid（不传则使用默认用户）'
+            }
+          },
+          required: ['base_id', 'sheet_id']
         }
       },
       {
@@ -803,6 +1137,89 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case 'get_wiki_doc_content': {
+        const { doc_key: docKey, operator_id } = args;
+        if (operator_id) {
+          dingtalk.setOperatorId(operator_id);
+        }
+        const result = await dingtalk.docRequest('GET', `/v1.0/doc/suites/documents/${docKey}/blocks`, { operatorId: operator_id || null });
+        const blocks = result.result?.data || [];
+        let output = '';
+        blocks.forEach((block) => {
+          const text = extractBlockText(block);
+          output += text + '\n\n';
+        });
+        if (!blocks.length) {
+          output = '（文档为空或无可读内容）';
+        }
+        return {
+          content: [{
+            type: 'text',
+            text: output.trim()
+          }]
+        };
+      }
+
+      case 'update_wiki_doc_content': {
+        const { doc_key: docKey, content, operator_id } = args;
+        if (operator_id) {
+          dingtalk.setOperatorId(operator_id);
+        }
+        const opId = await dingtalk.resolveOperatorId(operator_id || null);
+        await dingtalk.docRequest('POST', `/v1.0/doc/suites/documents/${docKey}/overwriteContent`, {
+          operatorId: opId,
+          data: {
+            operatorId: opId,
+            content,
+            contentType: 'markdown'
+          }
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: '✅ 文档内容已更新'
+          }]
+        };
+      }
+
+      case 'rename_wiki_doc': {
+        const { workspace_id, node_id, name, operator_id } = args;
+        if (operator_id) {
+          dingtalk.setOperatorId(operator_id);
+        }
+        const opId = await dingtalk.resolveOperatorId(operator_id || null);
+        await dingtalk.docRequest('PATCH', `/v1.0/doc/workspaces/${workspace_id}/docs/${node_id}`, {
+          operatorId: opId,
+          data: {
+            name,
+            operatorId: opId
+          }
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: `✅ 文档已重命名为: ${name}`
+          }]
+        };
+      }
+
+      case 'delete_wiki_doc': {
+        const { workspace_id, node_id, operator_id } = args;
+        if (operator_id) {
+          dingtalk.setOperatorId(operator_id);
+        }
+        const opId = await dingtalk.resolveOperatorId(operator_id || null);
+        await dingtalk.docRequest('DELETE', `/v1.0/doc/workspaces/${workspace_id}/docs/${node_id}`, {
+          operatorId: opId
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: `✅ 文档已删除 (nodeId: ${node_id})`
+          }]
+        };
+      }
+
       case 'list_notable_sheets': {
         const { base_id, operator_id } = args;
         const result = await dingtalk.notableRequest('GET', `/v1.0/notable/bases/${base_id}/sheets`, {
@@ -849,6 +1266,79 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [{
             type: 'text',
             text: output
+          }]
+        };
+      }
+
+      case 'create_notable_record': {
+        const { base_id, sheet_id, records, operator_id } = args;
+        const result = await dingtalk.notableRequest('POST', `/v1.0/notable/bases/${base_id}/sheets/${sheet_id}/records`, {
+          operatorId: operator_id || null,
+          data: { records }
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: `✅ 已创建 ${records.length} 条记录\n\n${JSON.stringify(result, null, 2)}`
+          }]
+        };
+      }
+
+      case 'update_notable_record': {
+        const { base_id, sheet_id, records, operator_id } = args;
+        const result = await dingtalk.notableRequest('PUT', `/v1.0/notable/bases/${base_id}/sheets/${sheet_id}/records`, {
+          operatorId: operator_id || null,
+          data: { records }
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: `✅ 已更新 ${records.length} 条记录\n\n${JSON.stringify(result, null, 2)}`
+          }]
+        };
+      }
+
+      case 'delete_notable_record': {
+        const { base_id, sheet_id, record_ids, operator_id } = args;
+        const result = await dingtalk.notableRequest('DELETE', `/v1.0/notable/bases/${base_id}/sheets/${sheet_id}/records`, {
+          operatorId: operator_id || null,
+          data: { recordIds: record_ids }
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: `✅ 已删除 ${record_ids.length} 条记录`
+          }]
+        };
+      }
+
+      case 'create_notable_sheet': {
+        const { base_id, name, fields, operator_id } = args;
+        const data = { name };
+        if (fields) {
+          data.fields = fields;
+        }
+        const result = await dingtalk.notableRequest('POST', `/v1.0/notable/bases/${base_id}/sheets`, {
+          operatorId: operator_id || null,
+          data
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: `✅ 数据表已创建\n\n${JSON.stringify(result, null, 2)}`
+          }]
+        };
+      }
+
+      case 'delete_notable_sheet': {
+        const { base_id, sheet_id, operator_id } = args;
+        await dingtalk.notableRequest('DELETE', `/v1.0/notable/bases/${base_id}/sheets/${sheet_id}`, {
+          operatorId: operator_id || null
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: `✅ 数据表已删除 (sheetId: ${sheet_id})`
           }]
         };
       }

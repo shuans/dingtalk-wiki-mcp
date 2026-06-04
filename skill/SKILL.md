@@ -7,10 +7,19 @@
 - `get_wiki_workspace` - 获取知识库详情
 - `list_wiki_nodes` - 列出知识库节点（文档 / 目录）
 - `get_wiki_node` - 获取节点详情
+- `get_wiki_doc_content` - 读取文档正文内容（Block 结构）
 - `create_wiki_doc` - 创建文档（支持 `DOC` / `WORKBOOK` / `MIND` / `FOLDER`）
+- `update_wiki_doc_content` - 覆写文档内容（Markdown，⚠️ 全量覆盖）
+- `rename_wiki_doc` - 重命名文档
+- `delete_wiki_doc` - 删除文档节点
 - `search_wiki` - 搜索知识库内容
 - `list_notable_sheets` - 获取 `.able` / AI 表格中的所有数据表
 - `list_notable_records` - 获取指定数据表中的 records
+- `create_notable_record` - 创建记录（单条或多条）
+- `update_notable_record` - 更新记录
+- `delete_notable_record` - 删除记录
+- `create_notable_sheet` - 创建数据表
+- `delete_notable_sheet` - 删除数据表
 
 ### 组织架构
 - `list_departments` - 列出部门列表
@@ -72,6 +81,25 @@ mcporter call dingtalk-wiki.create_wiki_doc \
 # 获取节点详情
 mcporter call dingtalk-wiki.get_wiki_node node_id="your_node_id"
 
+# 读取文档正文内容
+mcporter call dingtalk-wiki.get_wiki_doc_content doc_key="your_doc_key"
+
+# 更新文档内容（Markdown，⚠️ 全量覆盖）
+mcporter call dingtalk-wiki.update_wiki_doc_content \
+  doc_key="your_doc_key" \
+  content="# 新标题\n\n新正文"
+
+# 重命名文档
+mcporter call dingtalk-wiki.rename_wiki_doc \
+  workspace_id="your_workspace_id" \
+  node_id="your_node_id" \
+  name="新文档名称"
+
+# 删除文档
+mcporter call dingtalk-wiki.delete_wiki_doc \
+  workspace_id="your_workspace_id" \
+  node_id="your_node_id"
+
 # 搜索知识库内容
 mcporter call dingtalk-wiki.search_wiki keyword="项目规划"
 
@@ -101,6 +129,40 @@ mcporter call dingtalk-wiki.list_notable_records \
   base_id="your_base_id" \
   sheet_id="your_sheet_id" \
   next_token="your_next_token"
+
+# 创建记录（单条或多条）
+mcporter call dingtalk-wiki.create_notable_record \
+  base_id="your_base_id" \
+  sheet_id="your_sheet_id" \
+  records='[{"fields":{"姓名":"张三","年龄":25}}]'
+
+# 更新记录
+mcporter call dingtalk-wiki.update_notable_record \
+  base_id="your_base_id" \
+  sheet_id="your_sheet_id" \
+  records='[{"id":"record_id","fields":{"姓名":"李四","年龄":26}}]'
+
+# 删除记录
+mcporter call dingtalk-wiki.delete_notable_record \
+  base_id="your_base_id" \
+  sheet_id="your_sheet_id" \
+  record_ids='["record_id1","record_id2"]'
+
+# 创建数据表
+mcporter call dingtalk-wiki.create_notable_sheet \
+  base_id="your_base_id" \
+  name="新数据表"
+
+# 创建带字段的数据表
+mcporter call dingtalk-wiki.create_notable_sheet \
+  base_id="your_base_id" \
+  name="员工表" \
+  fields='[{"name":"姓名","type":"Text"},{"name":"年龄","type":"Number"}]'
+
+# 删除数据表
+mcporter call dingtalk-wiki.delete_notable_sheet \
+  base_id="your_base_id" \
+  sheet_id="your_sheet_id"
 ```
 
 ### 组织架构
