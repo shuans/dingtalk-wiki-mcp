@@ -417,6 +417,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             workspace_id: {
               type: 'string',
               description: '知识库工作空间 ID'
+            },
+            operator_id: {
+              type: 'string',
+              description: '操作者 unionid（不传则使用默认用户）'
             }
           },
           required: ['workspace_id']
@@ -434,7 +438,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             parent_node_id: {
               type: 'string',
-              description: '父节点 ID（不传则获取根目录）'
+              description: '父节点 ID（不传则列出根目录节点）'
+            },
+            operator_id: {
+              type: 'string',
+              description: '操作者 unionid（不传则使用默认用户）'
             }
           },
           required: ['workspace_id']
@@ -456,9 +464,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             doc_type: {
               type: 'string',
-              description: '文档类型: DOC(文字), WORKBOOK(表格), MIND(脑图), FOLDER(文件夹)',
-              enum: ['DOC', 'WORKBOOK', 'MIND', 'FOLDER'],
-              default: 'DOC'
+              description: '文档类型，可选: DOC / WORKBOOK / MIND / FOLDER（默认 DOC）'
+            },
+            operator_id: {
+              type: 'string',
+              description: '操作者 unionid（不传则使用默认用户）'
             },
             parent_node_id: {
               type: 'string',
@@ -507,6 +517,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             max_results: {
               type: 'number',
               description: '返回条数上限（默认 10，最大 20）'
+            },
+            next_token: {
+              type: 'string',
+              description: '分页游标（上次返回的 nextToken）'
             },
             operator_id: {
               type: 'string',
@@ -906,8 +920,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'get_wiki_workspace': {
-        const { workspace_id } = args;
-        // 通过列表获取详情
+        const { workspace_id, operator_id } = args;
+        if (operator_id) {
+          dingtalk.setOperatorId(operator_id);
+        }
         const result = await dingtalk.wikiRequest('workspaces');
         const workspaces = result.workspaces || [];
         const workspace = workspaces.find(ws => ws.workspaceId === workspace_id);
@@ -1082,9 +1098,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (operator_id) {
           dingtalk.setOperatorId(operator_id);
         }
-        const opId = await dingtalk.resolveOperatorId(operator_id || null);
         const result = await dingtalk.docRequest('GET', `/v2.0/wiki/nodes/${node_id}`, {
-          operatorId: opId
+          operatorId: operator_id || null
         });
         const node = result;
         let output = `📄 节点详情\n\n`;
@@ -1109,7 +1124,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (operator_id) {
           dingtalk.setOperatorId(operator_id);
         }
-        const opId = await dingtalk.resolveOperatorId(operator_id || null);
         const body = {
           keyword,
           maxResults: Math.min(max_results, 20)
@@ -1121,7 +1135,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           body.option = { workspaceIds: [workspace_id] };
         }
         const result = await dingtalk.docRequest('POST', '/v2.0/doc/search', {
-          operatorId: opId,
+          operatorId: operator_id || null,
           data: body
         });
         const items = result.items || [];
@@ -1220,20 +1234,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (operator_id) {
           dingtalk.setOperatorId(operator_id);
         }
-        const opId = await dingtalk.resolveOperatorId(operator_id || null);
         await dingtalk.docRequest('POST', `/v1.0/doc/suites/documents/${docKey}/overwriteContent`, {
-          operatorId: opId,
-          data: {
-            operatorId: opId,
-            content,
-            contentType: 'markdown'
-          }
+          operatorId: operator_id || null,
+          data: { content, contentType: 'markdown' }
         });
         return {
-          content: [{
-            type: 'text',
-            text: '✅ 文档内容已更新'
-          }]
+          content: [{ type: 'text', text: '✅ 文档内容已更新' }]
         };
       }
 
@@ -1242,19 +1248,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (operator_id) {
           dingtalk.setOperatorId(operator_id);
         }
-        const opId = await dingtalk.resolveOperatorId(operator_id || null);
         await dingtalk.docRequest('PATCH', `/v1.0/doc/workspaces/${workspace_id}/docs/${node_id}`, {
-          operatorId: opId,
-          data: {
-            name,
-            operatorId: opId
-          }
+          operatorId: operator_id || null,
+          data: { name }
         });
         return {
-          content: [{
-            type: 'text',
-            text: `✅ 文档已重命名为: ${name}`
-          }]
+          content: [{ type: 'text', text: `✅ 文档已重命名为: ${name}` }]
         };
       }
 
@@ -1263,9 +1262,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (operator_id) {
           dingtalk.setOperatorId(operator_id);
         }
-        const opId = await dingtalk.resolveOperatorId(operator_id || null);
         await dingtalk.docRequest('DELETE', `/v1.0/doc/workspaces/${workspace_id}/docs/${node_id}`, {
-          operatorId: opId
+          operatorId: operator_id || null
         });
         return {
           content: [{
