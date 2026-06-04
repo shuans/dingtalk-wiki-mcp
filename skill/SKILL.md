@@ -3,6 +3,9 @@
 钉钉知识库 MCP Server，支持通过 MCP 协议读写钉钉 Wiki / Docs 内容。
 
 ### 知识库管理
+- `search_wiki` - 按名称搜索知识库文档和文件夹（遍历目录树，无需索引）
+- `search_wiki_content` - 全文搜索文档内容 + Notable 表格内容（需先 `refresh_search_index`）
+- `refresh_search_index` - 全量重建搜索索引（支持普通文档和 Notable 表格）
 - `list_wiki_workspaces` - 列出知识库工作空间列表
 - `get_wiki_workspace` - 获取知识库详情
 - `list_wiki_nodes` - 列出知识库节点（文档 / 目录）
@@ -12,9 +15,6 @@
 - `update_wiki_doc_content` - 覆写文档内容（Markdown，⚠️ 全量覆盖）
 - `rename_wiki_doc` - 重命名文档
 - `delete_wiki_doc` - 删除文档节点
-- `search_wiki` - 按名称搜索知识库文档和文件夹（遍历目录树，无需索引）
-- `search_wiki_content` - 全文搜索文档内容（需先运行 `refresh_search_index` 建立索引）
-- `refresh_search_index` - 全量重建搜索索引（遍历所有知识库，读取文档正文）
 - `list_notable_sheets` - 获取 `.able` / AI 表格中的所有数据表
 - `list_notable_records` - 获取指定数据表中的 records
 - `create_notable_record` - 创建记录（单条或多条）
@@ -110,13 +110,22 @@ mcporter call dingtalk-wiki.search_wiki keyword="项目规划" workspace_id="you
 
 # 自定义返回条数
 mcporter call dingtalk-wiki.search_wiki keyword="项目规划" max_results=5
-
-# 全文搜索文档内容（需先建立索引）
-mcporter call dingtalk-wiki.search_wiki_content keyword="API集成"
-
-# 全量重建搜索索引（遍历所有知识库读取文档内容）
-mcporter call dingtalk-wiki.refresh_search_index
 ```
+
+### 全文搜索
+
+```bash
+# 先重建索引（遍历所有知识库获取文档和 Notable 表格内容）
+mcporter call dingtalk-wiki.refresh_search_index
+
+# 全文搜索文档内容（包括 Notable 表格记录）
+mcporter call dingtalk-wiki.search_wiki_content keyword="项目规划"
+
+# 搜索结果含匹配度和内容预览
+mcporter call dingtalk-wiki.search_wiki_content keyword="API集成" max_results=10
+```
+
+> 💡 `search_wiki`（按名称搜索）无需索引即可使用，`search_wiki_content`（全文搜索）需先运行 `refresh_search_index`。
 
 ### AI 表格（Notable）
 
