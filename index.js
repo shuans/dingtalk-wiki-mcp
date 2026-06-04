@@ -18,7 +18,30 @@ const DINGTALK_API_BASE = 'https://oapi.dingtalk.com';
 const DINGTALK_API_V2 = 'https://api.dingtalk.com';
 const fs = require('fs');
 const path = require('path');
-const CONFIG_PATH = process.env.DINGTALK_WIKI_CONFIG_PATH || path.join(__dirname, 'config.json');
+const os = require('os');
+const CACHE_DIR = path.join(os.homedir(), '.cache', 'dingtalk-wiki-mcp');
+const UNIONID_CACHE_PATH = path.join(CACHE_DIR, 'unionid-cache.json');
+
+if (!fs.existsSync(CACHE_DIR)) {
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+}
+
+let unionIdCache = {};
+try {
+  if (fs.existsSync(UNIONID_CACHE_PATH)) {
+    unionIdCache = JSON.parse(fs.readFileSync(UNIONID_CACHE_PATH, 'utf8'));
+  }
+} catch (e) {
+  console.error('[钉钉MCP] 读取 unionId 缓存失败:', e.message);
+}
+
+function saveUnionIdCache() {
+  try {
+    fs.writeFileSync(UNIONID_CACHE_PATH, JSON.stringify(unionIdCache, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[钉钉MCP] 写入 unionId 缓存失败:', e.message);
+  }
+}
 
 function loadEnvFile(filePath) {
   if (!filePath || !fs.existsSync(filePath)) {
@@ -42,30 +65,20 @@ for (const candidate of DOTENV_CANDIDATES) {
   }
 }
 
-// 加载配置文件
+// 加载配置
 let userConfig = {};
-try {
-  if (fs.existsSync(CONFIG_PATH)) {
-    const configData = fs.readFileSync(CONFIG_PATH, 'utf8');
-    userConfig = JSON.parse(configData);
-    console.error('[钉钉MCP] 已加载用户配置');
+if (process.env.DINGTALK_WIKI_CONFIG) {
+  try {
+    userConfig = JSON.parse(process.env.DINGTALK_WIKI_CONFIG);
+    console.error('[钉钉MCP] 已加载环境变量配置');
+  } catch (error) {
+    console.error('[钉钉MCP] 环境变量配置解析失败:', error.message);
   }
-} catch (error) {
-  console.error('[钉钉MCP] 配置文件加载失败:', error.message);
-}
-
-// 获取默认操作者 unionId
-function getDefaultOperatorId() {
-  if (userConfig.defaultUser && userConfig.users && userConfig.users[userConfig.defaultUser]) {
-    return userConfig.users[userConfig.defaultUser].unionId;
-  }
-  return null;
 }
 
 // 环境变量配置
 const DINGTALK_APP_KEY = process.env.DINGTALK_APP_KEY;
 const DINGTALK_APP_SECRET = process.env.DINGTALK_APP_SECRET;
-const DEFAULT_OPERATOR_ID = getDefaultOperatorId();
 
 if (!DINGTALK_APP_KEY || !DINGTALK_APP_SECRET) {
   console.error('错误: 请设置环境变量 DINGTALK_APP_KEY 和 DINGTALK_APP_SECRET');
@@ -114,36 +127,47 @@ class DingTalkClient {
     return true;
   }
 
-  // 获取当前用户 unionid
+  // 获取默认用户的 unionId — 优先级：内存 > 系统缓存 > API
   async getCurrentUserUnionId() {
     if (this.operatorId) {
       return this.operatorId;
     }
-    // 如果没有设置，尝试获取管理员信息
-    const token = await this.getAccessToken();
+
+    const defaultUser = userConfig.defaultUser;
+    const users = userConfig.users;
+    if (!defaultUser || !users || !users[defaultUser]) {
+      return null;
+    }
+
+    const user = users[defaultUser];
+    if (!user.userId) {
+      return null;
+    }
+
+    // 查系统缓存
+    if (unionIdCache[user.userId]) {
+      this.operatorId = unionIdCache[user.userId];
+      return this.operatorId;
+    }
+
+    // 调 API
     try {
+      const token = await this.getAccessToken();
       const response = await axios({
-        method: 'GET',
-        url: `${DINGTALK_API_V2}/v1.0/im/sceneGroups/managers`,
-        headers: {
-          'x-acs-dingtalk-access-token': token
-        }
+        method: 'POST',
+        url: `${DINGTALK_API_BASE}/topapi/v2/user/get`,
+        params: { access_token: token },
+        data: { userid: user.userId }
       });
-      if (response.data && response.data.userIds && response.data.userIds.length > 0) {
-        // 获取第一个用户的 unionid
-        const userResponse = await axios({
-          method: 'POST',
-          url: `${DINGTALK_API_BASE}/topapi/v2/user/get`,
-          params: { access_token: token },
-          data: { userid: response.data.userIds[0] }
-        });
-        if (userResponse.data && userResponse.data.result && userResponse.data.result.unionid) {
-          this.operatorId = userResponse.data.result.unionid;
-          return this.operatorId;
-        }
+      if (response.data.errcode === 0 && response.data.result && response.data.result.unionid) {
+        const unionid = response.data.result.unionid;
+        this.operatorId = unionid;
+        unionIdCache[user.userId] = unionid;
+        saveUnionIdCache();
+        return unionid;
       }
     } catch (error) {
-      console.error('获取当前用户失败:', error.message);
+      console.error('[钉钉MCP] 获取 unionId 失败:', error.message);
     }
     return null;
   }
@@ -377,10 +401,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'string',
               description: '父节点 ID（可选，不传则创建在根目录）'
             },
-            name: {
-              type: 'string',
-              description: '文档名称'
-            },
             content: {
               type: 'string',
               description: '文档内容（可选）'
@@ -427,6 +447,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: 'object',
           properties: {
+            dept_id: {
+              type: 'number',
+              description: '父部门 ID（默认 1 即根部门，可按需指定）',
+              default: 1
+            },
             fetch_child: {
               type: 'boolean',
               description: '是否递归获取子部门',
@@ -577,12 +602,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'list_wiki_workspaces': {
-        // 如果传入了 operator_id，则使用传入的，否则使用默认值
-        const operatorId = args.operator_id || DEFAULT_OPERATOR_ID;
-        if (operatorId) {
-          dingtalk.setOperatorId(operatorId);
-        } else {
-          throw new Error('未设置 operator_id，请传入 operator_id 或在配置文件中设置默认用户');
+        if (args.operator_id) {
+          dingtalk.setOperatorId(args.operator_id);
         }
         const result = await dingtalk.wikiRequest('workspaces');
         const workspaces = result.workspaces || [];
@@ -631,11 +652,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'list_wiki_nodes': {
         const { workspace_id, parent_node_id, operator_id } = args;
-        const opId = operator_id || DEFAULT_OPERATOR_ID;
-        if (opId) {
-          dingtalk.setOperatorId(opId);
-        } else {
-          throw new Error('未设置 operator_id，请传入 operator_id 或在配置文件中设置默认用户');
+        if (operator_id) {
+          dingtalk.setOperatorId(operator_id);
         }
         
         const params = { workspaceId: workspace_id };
@@ -673,12 +691,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'create_wiki_doc': {
         const { workspace_id, parent_node_id, name, doc_type = 'DOC', operator_id } = args;
-        const opId = operator_id || DEFAULT_OPERATOR_ID;
-        if (!opId) {
-          throw new Error('未设置 operator_id，请传入 operator_id 或在配置文件中设置默认用户');
+        if (operator_id) {
+          dingtalk.setOperatorId(operator_id);
         }
-        
+
         try {
+          const opId = await dingtalk.getCurrentUserUnionId();
+          if (!opId) {
+            throw new Error('未设置 operator_id，请传入 operator_id 或在配置文件中设置默认用户');
+          }
+
           // 获取 access token
           const token = await dingtalk.getAccessToken();
           
@@ -799,7 +821,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'list_departments': {
         const result = await dingtalk.oapiRequest('v2/department/listsub', {
-          dept_id: 1,
+          dept_id: args.dept_id || 1,
           fetch_child: args.fetch_child !== false
         });
         
@@ -833,11 +855,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           userid
         });
 
-        // 同时返回 unionid，方便设置 operator
         const userInfo = result.result || {};
         let output = `✅ 用户信息\n\n${JSON.stringify(userInfo, null, 2)}\n\n`;
-        if (userInfo.unionid) {
-          output += `💡 设置操作者命令:\nmcporter call dingtalk-wiki.set_operator unionid="${userInfo.unionid}"`;
+        if (userInfo.unionid && userInfo.userid) {
+          output += `💡 提示: 将以下 userId 写入 config.json 的 defaultUser，程序会自动获取并缓存 unionId:\n   "${userInfo.userid}"`;
         }
 
         return {
@@ -851,7 +872,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'list_notable_sheets': {
         const { base_id, operator_id } = args;
         const result = await dingtalk.notableRequest('GET', `/v1.0/notable/bases/${base_id}/sheets`, {
-          operatorId: operator_id || DEFAULT_OPERATOR_ID
+          operatorId: operator_id || null
         });
         const sheets = result.value || [];
         let output = `📊 数据表列表 (${sheets.length}个)\n\n`;
@@ -881,7 +902,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           payload.nextToken = next_token;
         }
         const result = await dingtalk.notableRequest('POST', `/v1.0/notable/bases/${base_id}/sheets/${sheet_id}/records/list`, {
-          operatorId: operator_id || DEFAULT_OPERATOR_ID,
+          operatorId: operator_id || null,
           data: payload
         });
         const records = result.records || [];

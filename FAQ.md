@@ -29,7 +29,7 @@ It is the DingTalk `unionId` used as the acting user for Wiki operations.
 
 ## Can I use it with OpenClaw?
 
-Yes. This repository includes `SKILL.md`, so it can be used as a reusable skill package in agent workflows.
+Yes. See [SKILL.md](./SKILL.md) for usage examples and [docs/skill-reference.md](./docs/skill-reference.md) for the full reference.
 
 ## Can I use it with mcporter or other MCP clients?
 

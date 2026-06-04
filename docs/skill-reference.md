@@ -1,4 +1,4 @@
-# DingTalk Wiki MCP Server
+# DingTalk Wiki MCP Server 参考文档
 
 钉钉知识库 MCP Server，支持通过 MCP 协议读写钉钉 Wiki / Docs 内容。
 
@@ -63,42 +63,6 @@ cp config.example.json config.json
 
 ---
 
-## 使用示例
-
-### 查看当前配置
-
-```bash
-mcporter call dingtalk-wiki.show_config
-```
-
-### 列出知识库
-
-```bash
-mcporter call dingtalk-wiki.list_wiki_workspaces
-```
-
-### 获取某个知识库节点
-
-```bash
-mcporter call dingtalk-wiki.list_wiki_nodes workspace_id="your_workspace_id"
-```
-
-### 创建文档
-
-```bash
-mcporter call dingtalk-wiki.create_wiki_doc \
-  workspace_id="your_workspace_id" \
-  name="新文档标题"
-```
-
-### 获取用户信息
-
-```bash
-mcporter call dingtalk-wiki.get_user_info userid="your_user_id"
-```
-
----
-
 ## 配置文件格式
 
 ```json
@@ -107,8 +71,7 @@ mcporter call dingtalk-wiki.get_user_info userid="your_user_id"
   "users": {
     "your-default-user": {
       "name": "Your Name",
-      "userId": "your-user-id",
-      "unionId": "your-union-id"
+      "userId": "your-user-id"
     }
   },
   "workspaces": {
@@ -118,7 +81,6 @@ mcporter call dingtalk-wiki.get_user_info userid="your_user_id"
       "type": "TEAM"
     }
   },
-  "appKey": "your-app-key"
 }
 ```
 

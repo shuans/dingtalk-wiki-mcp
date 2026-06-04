@@ -1,10 +1,10 @@
 {
-  "name": "dingtalk-wiki-mcp",
-  "version": "1.1.0",
+  "name": "dingtalk-wiki",
+  "version": "1.1.1",
   "description": "DingTalk Wiki / Docs read-write MCP server that fills the gap left by DingTalk official MCP.",
   "main": "index.js",
   "bin": {
-    "dingtalk-wiki-mcp": "./index.js"
+    "dingtalk-wiki": "./index.js"
   },
   "scripts": {
     "start": "node index.js",
@@ -22,21 +22,24 @@
     "openclaw",
     "javascript"
   ],
+  "files": [
+    "skill/",
+    "docs/",
+    "index.js",
+    "README.md",
+    "LICENSE"
+  ],
   "author": "ianen",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git@github.com:ianen/dingtalk-wiki-mcp.git"
-  },
-  "homepage": "https://github.com/ianen/dingtalk-wiki-mcp",
+  "homepage": "https://github.com/shuans/dingtalk-wiki-mcp",
   "bugs": {
-    "url": "https://github.com/ianen/dingtalk-wiki-mcp/issues"
+    "url": "https://github.com/shuans/dingtalk-wiki-mcp/issues"
   },
   "type": "commonjs",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.25.3",
-    "axios": "^1.13.4",
-    "dotenv": "^16.6.1",
-    "zod": "^4.3.6"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "axios": "latest",
+    "dotenv": "latest",
+    "zod": "latest"
   }
 }

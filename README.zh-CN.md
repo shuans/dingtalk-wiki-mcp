@@ -21,6 +21,57 @@
 
 ---
 
+## MCP 使用方法
+
+本服务通过 **stdio** 运行，兼容任何 MCP 客户端（OpenClaw、mcporter、Claude Desktop、VS Code 扩展等）。
+
+### 方式 A：配置到 MCP 客户端（推荐）
+
+所有配置集中在一个 JSON 块中，无需额外本地文件：
+
+```json
+{
+  "mcpServers": {
+    "dingtalk-wiki": {
+      "command": "node",
+      "args": ["/path/to/dingtalk-wiki-mcp/index.js"],
+      "env": {
+        "DINGTALK_APP_KEY": "your-app-key",
+        "DINGTALK_APP_SECRET": "your-app-secret",
+        "DINGTALK_WIKI_CONFIG": "{\"defaultUser\":\"me\",\"users\":{\"me\":{\"name\":\"Your Name\",\"userId\":\"your-user-id\"}},\"workspaces\":{}}"
+      }
+    }
+  }
+}
+```
+
+> `DINGTALK_WIKI_CONFIG` 必须是 JSON **字符串**（MCP 客户端 env 字段只接受 string 类型）。
+
+| 环境变量 | 说明 |
+|---------|------|
+| `DINGTALK_APP_KEY` | 钉钉应用 AppKey |
+| `DINGTALK_APP_SECRET` | 钉钉应用 AppSecret |
+| `DINGTALK_WIKI_CONFIG` | 用户/知识库配置（JSON 字符串），必填 |
+
+首次调用时程序自动通过 `userId` 获取 `unionId` 并缓存到 `~/.cache/dingtalk-wiki-mcp/`，后续启动不再重复请求。
+
+之后以 `dingtalk-wiki.工具名` 的方式调用（如 `dingtalk-wiki.list_wiki_workspaces`）。
+
+### 方式 B：直接 stdio 模式（mcporter）
+
+```bash
+mcporter call --stdio "node /path/to/index.js" list_wiki_workspaces
+```
+
+### 方式 C：独立启动
+
+```bash
+node index.js
+```
+MCP 客户端通过 stdio 连接即可。
+
+---
+
 ## 快速开始
 
 ### 1）安装依赖
@@ -44,13 +95,7 @@ DINGTALK_APP_SECRET=your-app-secret
 
 现在 `index.js` 会在环境变量未显式设置时，自动加载当前工作目录（或仓库目录）下的 `.env`。
 
-### 3）准备本地配置
-
-```bash
-cp config.example.json config.json
-```
-
-### 4）运行
+### 3）运行
 
 ```bash
 npm start
@@ -239,13 +284,13 @@ mcporter call --stdio "node ./index.js" create_wiki_doc workspace_id="your_works
 - [Changelog](./CHANGELOG.md)
 - [API 测试说明](./API_TEST_REPORT.md)
 - [Skill 定义](./SKILL.md)
+- [Skill 参考文档](./docs/skill-reference.md)
 
 ---
 
 ## 安全说明
 
-- `config.json` 包含你的本地用户和 workspace 配置，**不要提交到 Git 仓库**
-- 仓库已默认忽略 `config.json` 和 `.env`
+- 仓库已默认忽略 `.env`
 - 建议通过环境变量注入 AppKey / AppSecret，而不是写死在代码里
 
 ---

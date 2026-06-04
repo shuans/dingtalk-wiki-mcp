@@ -21,6 +21,58 @@
 
 ---
 
+## MCP 使用方法 / MCP Usage
+
+This server runs over **stdio** and works with any MCP-compatible client (OpenClaw, mcporter, Claude Desktop, VS Code extensions, etc.).
+
+### Option A: Configure in MCP client (recommended)
+
+All config goes into one JSON block — no local files needed:
+
+```json
+{
+  "mcpServers": {
+    "dingtalk-wiki": {
+      "command": "node",
+      "args": ["/path/to/dingtalk-wiki-mcp/index.js"],
+      "env": {
+        "DINGTALK_APP_KEY": "your-app-key",
+        "DINGTALK_APP_SECRET": "your-app-secret",
+        "DINGTALK_WIKI_CONFIG": "{\"defaultUser\":\"me\",\"users\":{\"me\":{\"name\":\"Your Name\",\"userId\":\"your-user-id\"}},\"workspaces\":{\"id\":\"\",\"url\":\"\",\"type\":\"TEAM\"}}"
+      }
+    }
+  }
+}
+```
+
+> `DINGTALK_WIKI_CONFIG` 必须是 JSON **字符串**（MCP 客户端 env 字段只接受 string 类型）。
+
+| env var | Description |
+|---------|------|
+| `DINGTALK_APP_KEY` | DingTalk App Key |
+| `DINGTALK_APP_SECRET` | DingTalk App Secret |
+| `DINGTALK_WIKI_CONFIG` | User/workspace config (JSON string), required |
+
+On first call the server auto-fetches `unionId` via `userId` and caches it to `~/.cache/dingtalk-wiki-mcp/`.
+
+Then call tools as `dingtalk-wiki.list_wiki_workspaces` (namespaced).
+
+### Option B: Direct stdio mode (mcporter)
+
+```bash
+mcporter call --stdio "node /path/to/index.js" list_wiki_workspaces
+```
+
+### Option C: Run standalone
+
+```bash
+node index.js
+```
+
+Then your MCP client connects via stdio.
+
+---
+
 ## Quick Start
 
 ### 1) Install
@@ -44,16 +96,10 @@ DINGTALK_APP_SECRET=your-app-secret
 
 `index.js` now auto-loads `.env` from the current working directory (or the repo directory) if those variables are not already present in the environment.
 
-### 3) Prepare local config
+### 3) Run
 
 ```bash
-cp config.example.json config.json
-```
-
-### 4) Run
-
-```bash
-npm start
+pnpm start
 ```
 
 Or:
@@ -69,18 +115,18 @@ node index.js
 
 ## DingTalk official MCP vs this project
 
-| Capability | DingTalk official MCP | dingtalk-wiki-mcp |
-|---|---:|---:|
-| Wiki read | Not covered | ✅ |
-| Wiki write | Not covered | ✅ |
-| Create docs | Not covered | ✅ |
-| Create folders | Not covered | ✅ |
-| Create mind maps | Not covered | ✅ |
-| Browse workspaces | Not covered | ✅ |
-| Browse nodes / folders | Not covered | ✅ |
-| Read Notable / `.able` records | Not covered | ✅ |
-| MCP client compatibility | Partial / official scope only | ✅ stdio MCP-compatible |
-| OpenClaw skill packaging | No | ✅ includes `SKILL.md` |
+| Capability                     |         DingTalk official MCP |       dingtalk-wiki-mcp |
+| ------------------------------ | ----------------------------: | ----------------------: |
+| Wiki read                      |                   Not covered |                      ✅ |
+| Wiki write                     |                   Not covered |                      ✅ |
+| Create docs                    |                   Not covered |                      ✅ |
+| Create folders                 |                   Not covered |                      ✅ |
+| Create mind maps               |                   Not covered |                      ✅ |
+| Browse workspaces              |                   Not covered |                      ✅ |
+| Browse nodes / folders         |                   Not covered |                      ✅ |
+| Read Notable / `.able` records |                   Not covered |                      ✅ |
+| MCP client compatibility       | Partial / official scope only | ✅ stdio MCP-compatible |
+| OpenClaw skill packaging       |                            No |  ✅ includes `SKILL.md` |
 
 **Positioning principle:** this project does **not** replace the official DingTalk MCP. It **complements** it by filling the Wiki / Docs gap.
 
@@ -89,6 +135,7 @@ node index.js
 ## Core capabilities
 
 ### Wiki / Docs
+
 - List Wiki workspaces
 - Get workspace details
 - List Wiki nodes (folders / docs)
@@ -101,16 +148,19 @@ node index.js
 - Read Notable / `.able` sheets and records via official API
 
 ### Organization
+
 - List departments
 - List department users
 - Get user info
 
 ### Operator / Config
+
 - Set current operator (`unionId`)
 - Use a default operator from local config
 - Inspect current local config
 
 ### Skill included
+
 This repo is not only an MCP server. It also includes:
 
 - `SKILL.md`
@@ -140,12 +190,15 @@ So it can be reused as a **skill package** in OpenClaw-style agent workflows.
 ## Real use cases
 
 ### 1) AI automatically creates weekly report docs
+
 Your AI agent can create a fresh DingTalk Wiki document every week for sales, product, or ops reporting.
 
 ### 2) Agent explores Wiki structure before writing
+
 Before generating content, an agent can inspect workspaces and folders first, then choose the right target node.
 
 ### 3) Auto-initialize project knowledge-base structure
+
 When a new project starts, automation can create a standard folder tree such as:
 
 - Project Overview
@@ -238,14 +291,14 @@ Please refer to DingTalk Open Platform documentation for the latest permission n
 - [FAQ](./FAQ.md)
 - [Changelog](./CHANGELOG.md)
 - [API test notes](./API_TEST_REPORT.md)
-- [Skill definition](./SKILL.md)
+- [Skill definition](./skill/SKILL.md)
+- [Skill reference (Chinese)](./docs/skill-reference.md)
 
 ---
 
 ## Security notes
 
-- `config.json` contains your local user and workspace metadata, so **do not commit it**
-- this repository already ignores `config.json` and `.env`
+- This repository ignores `.env`
 - inject AppKey / AppSecret via environment variables instead of hardcoding them
 
 ---
