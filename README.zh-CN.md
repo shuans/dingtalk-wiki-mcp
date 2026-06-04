@@ -15,7 +15,8 @@
 ## 仓库要点
 
 - **官方 MCP 有空白**：没有覆盖 Wiki / Docs 读写
-- **这个项目补上了**：支持 workspace、node 浏览和文档创建
+- **这个项目补上了**：支持 workspace、node 浏览、文档 CRUD 和全文搜索
+- **本地搜索索引**：MiniSearch + SQLite — 全文搜索文档和 Notable 表格内容
 - **MCP 兼容**：兼容 stdio 模式的 MCP client
 - **Agent 友好**：自带 `SKILL.md`，可直接作为 skill 复用
 
@@ -124,6 +125,8 @@ node index.js
 | 浏览 workspace | 未覆盖 | ✅ |
 | 浏览 nodes / 目录 | 未覆盖 | ✅ |
 | 读取 Notable / `.able` 记录 | 未覆盖 | ✅ |
+| 名称搜索 | 未覆盖 | ✅ |
+| 全文内容搜索 | 未覆盖 | ✅ MiniSearch + SQLite |
 | MCP 客户端兼容性 | 官方范围内 | ✅ stdio 兼容 |
 | OpenClaw skill 化复用 | 无 | ✅ 自带 `SKILL.md` |
 
@@ -142,7 +145,9 @@ node index.js
   - `WORKBOOK`
   - `MIND`
   - `FOLDER`
-- 提供跳转式 Wiki 搜索能力
+- 按名称搜索（`search_wiki`，BFS 遍历目录树，无需索引）
+- 全文内容搜索（`search_wiki_content`，MiniSearch + SQLite 索引）
+- 搜索索引管理（`refresh_search_index`）
 - 通过官方 API 读取 Notable / `.able` 的数据表和记录
 
 ### 组织架构
@@ -236,17 +241,22 @@ mcporter call --stdio "node ./index.js" create_wiki_doc workspace_id="your_works
 
 ## 可用 MCP 工具
 
-- `list_wiki_workspaces`
-- `get_wiki_workspace`
-- `list_wiki_nodes`
-- `get_wiki_node`
-- `create_wiki_doc`
-- `search_wiki`
-- `list_departments`
-- `get_department_users`
-- `get_user_info`
-- `list_notable_sheets`
-- `list_notable_records`
+### Wiki / Docs
+- `list_wiki_workspaces` / `get_wiki_workspace`
+- `list_wiki_nodes` / `get_wiki_node`
+- `create_wiki_doc` / `delete_wiki_doc` / `rename_wiki_doc`
+- `get_wiki_doc_content` / `update_wiki_doc_content`
+- `search_wiki` — 名称搜索（BFS，无需索引）
+- `search_wiki_content` — 全文搜索（需先建索引）
+- `refresh_search_index` — 重建搜索索引
+
+### AI 表格（Notable）
+- `list_notable_sheets` / `list_notable_records`
+- `create_notable_record` / `update_notable_record` / `delete_notable_record`
+- `create_notable_sheet` / `delete_notable_sheet`
+
+### 组织架构
+- `list_departments` / `get_department_users` / `get_user_info`
 
 ---
 
@@ -295,9 +305,9 @@ mcporter call --stdio "node ./index.js" create_wiki_doc workspace_id="your_works
 
 - 本项目是社区补充实现，不是钉钉官方项目
 - 部分 API 需要企业侧权限审批
-- `search_wiki` 当前更偏向“跳转辅助”，不是完整全文检索实现
-- 目前项目仍未实现通过官方公开 API 读取普通 DingTalk 文档正文
-- 当前 Notable / `.able` 支持的是数据表和 records 读取，不是任意正文导出
+- `search_wiki` 通过 BFS 遍历目录树按名称匹配（始终可用）
+- `search_wiki_content` 使用 MiniSearch + SQLite 全文搜索，需先运行 `refresh_search_index`
+- 搜索索引在写入操作（创建/更新/重命名/删除）时通过异步 hook 自动更新
 
 ---
 
