@@ -154,6 +154,32 @@ class WikiSearchIndex {
   }
 }
 
+async function reindexNotableBase(baseId) {
+  try {
+    const sheetsRes = await dingtalk.notableRequest('GET', `/v1.0/notable/bases/${baseId}/sheets`);
+    const sheets = sheetsRes.value || [];
+    const texts = [];
+    for (const sheet of sheets) {
+      try {
+        const recordsRes = await dingtalk.notableRequest('POST', `/v1.0/notable/bases/${baseId}/sheets/${sheet.id}/records/list`, {
+          data: { maxResults: 500 }
+        });
+        const records = recordsRes.records || [];
+        for (const rec of records) {
+          for (const val of Object.values(rec.fields || {})) {
+            if (typeof val === 'string' || typeof val === 'number') {
+              texts.push(String(val));
+            }
+          }
+        }
+      } catch (e) { /* skip sheet */ }
+    }
+    wikiIndex.update(baseId, { content: texts.join('\n') });
+  } catch (e) {
+    console.error(`[钉钉MCP] 重建 Notable 表索引失败 [${baseId}]:`, e.message);
+  }
+}
+
 async function rebuildSearchIndex() {
   const wsResult = await dingtalk.wikiRequest('workspaces');
   const workspaces = wsResult.workspaces || [];
@@ -188,6 +214,30 @@ async function rebuildSearchIndex() {
               const blockData = blocks.result?.data || [];
               content = blockData.map(b => extractBlockText(b)).join('\n\n');
             } catch (e) { /* content unavailable */ }
+
+            if (!content) {
+              try {
+                const sheetsRes = await dingtalk.notableRequest('GET', `/v1.0/notable/bases/${childId}/sheets`);
+                const sheets = sheetsRes.value || [];
+                const texts = [];
+                for (const sheet of sheets) {
+                  try {
+                    const recordsRes = await dingtalk.notableRequest('POST', `/v1.0/notable/bases/${childId}/sheets/${sheet.id}/records/list`, {
+                      data: { maxResults: 500 }
+                    });
+                    const records = recordsRes.records || [];
+                    for (const rec of records) {
+                      for (const val of Object.values(rec.fields || {})) {
+                        if (typeof val === 'string' || typeof val === 'number') {
+                          texts.push(String(val));
+                        }
+                      }
+                    }
+                  } catch (e) { /* skip sheet */ }
+                }
+                content = texts.join('\n');
+              } catch (e) { /* not a Notable table */ }
+            }
 
             wikiIndex.add(childId, {
               title: name, content,
@@ -1632,6 +1682,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           operatorId: operator_id || null,
           data: { records }
         });
+        setImmediate(() => reindexNotableBase(base_id));
         return {
           content: [{
             type: 'text',
@@ -1646,6 +1697,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           operatorId: operator_id || null,
           data: { records }
         });
+        setImmediate(() => reindexNotableBase(base_id));
         return {
           content: [{
             type: 'text',
@@ -1660,6 +1712,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           operatorId: operator_id || null,
           data: { recordIds: record_ids }
         });
+        setImmediate(() => reindexNotableBase(base_id));
         return {
           content: [{
             type: 'text',
