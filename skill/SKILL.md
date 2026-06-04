@@ -12,7 +12,9 @@
 - `update_wiki_doc_content` - 覆写文档内容（Markdown，⚠️ 全量覆盖）
 - `rename_wiki_doc` - 重命名文档
 - `delete_wiki_doc` - 删除文档节点
-- `search_wiki` - 搜索知识库内容
+- `search_wiki` - 按名称搜索知识库文档和文件夹（遍历目录树，无需索引）
+- `search_wiki_content` - 全文搜索文档内容（需先运行 `refresh_search_index` 建立索引）
+- `refresh_search_index` - 全量重建搜索索引（遍历所有知识库，读取文档正文）
 - `list_notable_sheets` - 获取 `.able` / AI 表格中的所有数据表
 - `list_notable_records` - 获取指定数据表中的 records
 - `create_notable_record` - 创建记录（单条或多条）
@@ -100,7 +102,7 @@ mcporter call dingtalk-wiki.delete_wiki_doc \
   workspace_id="your_workspace_id" \
   node_id="your_node_id"
 
-# 搜索知识库
+# 按名称搜索
 mcporter call dingtalk-wiki.search_wiki keyword="项目规划"
 
 # 在指定知识库内搜索
@@ -109,8 +111,11 @@ mcporter call dingtalk-wiki.search_wiki keyword="项目规划" workspace_id="you
 # 自定义返回条数
 mcporter call dingtalk-wiki.search_wiki keyword="项目规划" max_results=5
 
-# 分页搜索
-mcporter call dingtalk-wiki.search_wiki keyword="项目规划" next_token="your_next_token"
+# 全文搜索文档内容（需先建立索引）
+mcporter call dingtalk-wiki.search_wiki_content keyword="API集成"
+
+# 全量重建搜索索引（遍历所有知识库读取文档内容）
+mcporter call dingtalk-wiki.refresh_search_index
 ```
 
 ### AI 表格（Notable）
