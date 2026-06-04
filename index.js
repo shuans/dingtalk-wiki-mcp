@@ -488,7 +488,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'search_wiki',
-        description: '搜索知识库内容',
+        description: '搜索知识库（POST /v2.0/doc/search）',
         inputSchema: {
           type: 'object',
           properties: {
@@ -499,6 +499,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             workspace_id: {
               type: 'string',
               description: '指定知识库 ID（可选）'
+            },
+            max_results: {
+              type: 'number',
+              description: '返回条数上限（默认 10，最大 20）'
+            },
+            operator_id: {
+              type: 'string',
+              description: '操作者 unionid（不传则使用默认用户）'
             }
           },
           required: ['keyword']
@@ -1077,13 +1085,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'search_wiki': {
-        const { keyword, workspace_id } = args;
-        // Wiki 搜索 API 需要额外权限
+        const { keyword, workspace_id, max_results = 10, next_token, operator_id } = args;
+        if (operator_id) {
+          dingtalk.setOperatorId(operator_id);
+        }
+        const opId = await dingtalk.resolveOperatorId(operator_id || null);
+        const body = {
+          keyword,
+          maxResults: Math.min(max_results, 20)
+        };
+        if (next_token) {
+          body.nextToken = next_token;
+        }
+        if (workspace_id) {
+          body.option = { workspaceIds: [workspace_id] };
+        }
+        const result = await dingtalk.docRequest('POST', '/v2.0/doc/search', {
+          operatorId: opId,
+          data: body
+        });
+        const items = result.items || [];
+        let output = `🔍 搜索 "${keyword}" (${items.length}条)\n\n`;
+        items.forEach((item, i) => {
+          output += `${i + 1}. ${item.name}\n`;
+          output += `   知识库: ${item.workspaceId}\n`;
+          output += `   链接: ${item.url}\n\n`;
+        });
+        if (!items.length) {
+          output += '没有找到匹配的知识库。\n';
+        }
+        if (result.nextToken) {
+          output += `--- 更多结果, nextToken: ${result.nextToken} ---\n`;
+        }
         return {
-          content: [{
-            type: 'text',
-            text: `🔍 搜索知识库: ${keyword}\n\n搜索功能需要 Wiki.Search 权限。\n\n请直接访问知识库网页版进行搜索：\nhttps://alidocs.dingtalk.com/i/spaces/${workspace_id || ''}/search?keyword=${encodeURIComponent(keyword)}`
-          }]
+          content: [{ type: 'text', text: output }]
         };
       }
 
