@@ -1,6 +1,6 @@
 {
   "name": "dingtalk-wiki",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "DingTalk Wiki / Docs read-write MCP server that fills the gap left by DingTalk official MCP.",
   "main": "index.js",
   "bin": {

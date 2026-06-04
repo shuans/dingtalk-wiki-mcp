@@ -15,7 +15,8 @@
 ## Repository Highlights
 
 - **Official MCP gap**: Wiki / Docs read-write is not covered
-- **This project adds it**: workspace browsing, node browsing, and document creation
+- **This project adds it**: workspace browsing, node browsing, document CRUD, and full-text search
+- **Local search index**: MiniSearch + SQLite — full-text content search across docs and Notable tables
 - **MCP-compatible**: works with stdio-based MCP clients
 - **Agent-ready**: includes `SKILL.md` for OpenClaw-style skill workflows
 
@@ -124,6 +125,8 @@ node index.js
 | Browse workspaces              |                   Not covered |                      ✅ |
 | Browse nodes / folders         |                   Not covered |                      ✅ |
 | Read Notable / `.able` records |                   Not covered |                      ✅ |
+| Name search                    |                   Not covered |                      ✅ |
+| Full-text content search       |                   Not covered | ✅ MiniSearch + SQLite |
 | MCP client compatibility       | Partial / official scope only | ✅ stdio MCP-compatible |
 | OpenClaw skill packaging       |                            No |  ✅ includes `SKILL.md` |
 
@@ -143,7 +146,9 @@ node index.js
   - `WORKBOOK`
   - `MIND`
   - `FOLDER`
-- Search Wiki by linking to DingTalk search
+- Search by name (`search_wiki`, BFS directory traversal, always available)
+- Full-text content search (`search_wiki_content`, MiniSearch + SQLite index)
+- Search index management (`refresh_search_index`)
 - Read Notable / `.able` sheets and records via official API
 
 ### Organization
@@ -243,17 +248,22 @@ mcporter call --stdio "node ./index.js" create_wiki_doc workspace_id="your_works
 
 ## Available MCP tools
 
-- `list_wiki_workspaces`
-- `get_wiki_workspace`
-- `list_wiki_nodes`
-- `get_wiki_node`
-- `create_wiki_doc`
-- `search_wiki`
-- `list_departments`
-- `get_department_users`
-- `get_user_info`
-- `list_notable_sheets`
-- `list_notable_records`
+### Wiki / Docs
+- `list_wiki_workspaces` / `get_wiki_workspace`
+- `list_wiki_nodes` / `get_wiki_node`
+- `create_wiki_doc` / `delete_wiki_doc` / `rename_wiki_doc`
+- `get_wiki_doc_content` / `update_wiki_doc_content`
+- `search_wiki` — name search (BFS, no index needed)
+- `search_wiki_content` — full-text search (requires index)
+- `refresh_search_index` — rebuild search index
+
+### AI 表格 (Notable)
+- `list_notable_sheets` / `list_notable_records`
+- `create_notable_record` / `update_notable_record` / `delete_notable_record`
+- `create_notable_sheet` / `delete_notable_sheet`
+
+### Organization
+- `list_departments` / `get_department_users` / `get_user_info`
 
 ---
 
@@ -301,8 +311,9 @@ Please refer to DingTalk Open Platform documentation for the latest permission n
 
 - This is a community-maintained complement, not an official DingTalk project
 - Some APIs require enterprise approval on the DingTalk side
-- `search_wiki` is currently more of a search-entry helper than a full-text search implementation
-- Reading normal DingTalk document body content via official public API is still not implemented in this project
+- `search_wiki` traverses directory tree by name (always available)
+- `search_wiki_content` uses MiniSearch + SQLite for full-text search, requires `refresh_search_index` first
+- Search index updates on write operations (create/update/rename/delete) via async hooks
 - Notable / `.able` support currently covers sheets and records, not arbitrary document-body export
 
 ---
