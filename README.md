@@ -38,14 +38,13 @@ All config goes into one JSON block — no local files needed:
       "env": {
         "DINGTALK_APP_KEY": "your-app-key",
         "DINGTALK_APP_SECRET": "your-app-secret",
-        "DINGTALK_WIKI_CONFIG": "{\"defaultUser\":\"me\",\"users\":{\"me\":{\"name\":\"Your Name\",\"userId\":\"your-user-id\"}},\"workspaces\":{\"id\":\"\",\"url\":\"\",\"type\":\"TEAM\"}}"
+        "DINGTALK_WIKI_CONFIG": "{\"defaultUser\":\"me\",\"users\":{\"me\":{\"userId\":\"your-user-id\"}}}"
       }
     }
   }
 }
 ```
 
-> `DINGTALK_WIKI_CONFIG` 必须是 JSON **字符串**（MCP 客户端 env 字段只接受 string 类型）。
 
 | env var | Description |
 |---------|------|
@@ -224,7 +223,6 @@ When a new project starts, automation can create a standard folder tree such as:
 If you have registered this server in your MCP client config under the name `dingtalk-wiki`:
 
 ```bash
-mcporter call dingtalk-wiki.show_config
 mcporter call dingtalk-wiki.list_wiki_workspaces
 mcporter call dingtalk-wiki.list_wiki_nodes workspace_id="your_workspace_id"
 mcporter call dingtalk-wiki.create_wiki_doc workspace_id="your_workspace_id" name="Weekly Summary" doc_type="DOC"
@@ -236,7 +234,6 @@ mcporter call dingtalk-wiki.get_user_info userid="your_user_id"
 If you want to run the server directly without pre-registering it, call the tool names directly:
 
 ```bash
-mcporter call --stdio "node ./index.js" show_config
 mcporter call --stdio "node ./index.js" list_wiki_workspaces
 mcporter call --stdio "node ./index.js" list_wiki_nodes workspace_id="your_workspace_id"
 mcporter call --stdio "node ./index.js" create_wiki_doc workspace_id="your_workspace_id" name="Weekly Summary" doc_type="DOC"
@@ -246,8 +243,6 @@ mcporter call --stdio "node ./index.js" create_wiki_doc workspace_id="your_works
 
 ## Available MCP tools
 
-- `set_operator`
-- `show_config`
 - `list_wiki_workspaces`
 - `get_wiki_workspace`
 - `list_wiki_nodes`
@@ -292,7 +287,6 @@ Please refer to DingTalk Open Platform documentation for the latest permission n
 - [Changelog](./CHANGELOG.md)
 - [API test notes](./API_TEST_REPORT.md)
 - [Skill definition](./skill/SKILL.md)
-- [Skill reference (Chinese)](./docs/skill-reference.md)
 
 ---
 

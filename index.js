@@ -311,28 +311,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
-        name: 'set_operator',
-        description: '设置操作者 unionid（用于访问 Wiki API）',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            unionid: {
-              type: 'string',
-              description: '用户的 unionid'
-            }
-          },
-          required: ['unionid']
-        }
-      },
-      {
-        name: 'show_config',
-        description: '显示当前配置信息（默认用户和知识库列表）',
-        inputSchema: {
-          type: 'object',
-          properties: {}
-        }
-      },
-      {
         name: 'list_wiki_workspaces',
         description: '列出用户有权限的知识库工作空间列表',
         inputSchema: {
@@ -557,50 +535,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     switch (name) {
-      case 'set_operator': {
-        const { unionid } = args;
-        dingtalk.setOperatorId(unionid);
-        return {
-          content: [{
-            type: 'text',
-            text: `✅ 操作者已设置为: ${unionid}`
-          }]
-        };
-      }
-
-      case 'show_config': {
-        let output = '⚙️ 当前配置信息\n\n';
-        
-        output += '👤 默认用户:\n';
-        if (userConfig.defaultUser && userConfig.users) {
-          const user = userConfig.users[userConfig.defaultUser];
-          output += `  姓名: ${user.name}\n`;
-          output += `  User ID: ${user.userId}\n`;
-          output += `  Union ID: ${user.unionId}\n`;
-        } else {
-          output += '  (未配置)\n';
-        }
-        
-        output += '\n📚 知识库列表:\n';
-        if (userConfig.workspaces) {
-          Object.entries(userConfig.workspaces).forEach(([name, info], index) => {
-            output += `  ${index + 1}. ${name}\n`;
-            output += `     ID: ${info.id}\n`;
-          });
-        }
-        
-        output += '\n💡 使用提示:\n';
-        output += '  - list_wiki_workspaces 和 list_wiki_nodes 会自动使用默认 operator_id\n';
-        output += '  - 如需使用其他用户，可传入 operator_id 参数覆盖\n';
-        
-        return {
-          content: [{
-            type: 'text',
-            text: output
-          }]
-        };
-      }
-
       case 'list_wiki_workspaces': {
         if (args.operator_id) {
           dingtalk.setOperatorId(args.operator_id);

@@ -38,7 +38,7 @@
       "env": {
         "DINGTALK_APP_KEY": "your-app-key",
         "DINGTALK_APP_SECRET": "your-app-secret",
-        "DINGTALK_WIKI_CONFIG": "{\"defaultUser\":\"me\",\"users\":{\"me\":{\"name\":\"Your Name\",\"userId\":\"your-user-id\"}},\"workspaces\":{}}"
+        "DINGTALK_WIKI_CONFIG": "{\"defaultUser\":\"me\",\"users\":{\"me\":{\"userId\":\"your-user-id\"}}}"
       }
     }
   }
@@ -216,7 +216,6 @@ node index.js
 如果你已经在 MCP client 里把这个 server 注册为 `dingtalk-wiki`：
 
 ```bash
-mcporter call dingtalk-wiki.show_config
 mcporter call dingtalk-wiki.list_wiki_workspaces
 mcporter call dingtalk-wiki.list_wiki_nodes workspace_id="your_workspace_id"
 mcporter call dingtalk-wiki.create_wiki_doc workspace_id="your_workspace_id" name="Weekly Summary" doc_type="DOC"
@@ -228,7 +227,6 @@ mcporter call dingtalk-wiki.get_user_info userid="your_user_id"
 如果你不想预先注册 server，而是直接拉起它，那么工具名直接写裸工具名：
 
 ```bash
-mcporter call --stdio "node ./index.js" show_config
 mcporter call --stdio "node ./index.js" list_wiki_workspaces
 mcporter call --stdio "node ./index.js" list_wiki_nodes workspace_id="your_workspace_id"
 mcporter call --stdio "node ./index.js" create_wiki_doc workspace_id="your_workspace_id" name="Weekly Summary" doc_type="DOC"
@@ -238,8 +236,6 @@ mcporter call --stdio "node ./index.js" create_wiki_doc workspace_id="your_works
 
 ## 可用 MCP 工具
 
-- `set_operator`
-- `show_config`
 - `list_wiki_workspaces`
 - `get_wiki_workspace`
 - `list_wiki_nodes`

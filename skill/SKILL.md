@@ -17,10 +17,6 @@
 - `get_department_users` - 获取部门成员
 - `get_user_info` - 获取用户详情（包含 `unionid`）
 
-### 配置管理
-- `set_operator` - 设置操作者 `unionid`
-- `show_config` - 显示当前配置信息
-
 ## 使用示例
 
 ### 查看所有工具
@@ -29,34 +25,99 @@
 mcporter list dingtalk-wiki
 ```
 
-### 查看当前配置
+### 知识库管理
 
 ```bash
-mcporter call dingtalk-wiki.show_config
-```
-
-### 列出知识库
-
-```bash
+# 列出知识库工作空间
 mcporter call dingtalk-wiki.list_wiki_workspaces
-```
 
-### 获取某个知识库节点
+# 获取知识库详情
+mcporter call dingtalk-wiki.get_wiki_workspace workspace_id="your_workspace_id"
 
-```bash
+# 列出知识库节点（根目录）
 mcporter call dingtalk-wiki.list_wiki_nodes workspace_id="your_workspace_id"
-```
 
-### 创建文档
+# 列出指定目录下的节点
+mcporter call dingtalk-wiki.list_wiki_nodes workspace_id="your_workspace_id" parent_node_id="folder_node_id"
 
-```bash
+# 创建文档（默认 DOC）
 mcporter call dingtalk-wiki.create_wiki_doc \
   workspace_id="your_workspace_id" \
   name="新文档标题"
+
+# 创建表格
+mcporter call dingtalk-wiki.create_wiki_doc \
+  workspace_id="your_workspace_id" \
+  name="数据统计" \
+  doc_type="WORKBOOK"
+
+# 创建脑图
+mcporter call dingtalk-wiki.create_wiki_doc \
+  workspace_id="your_workspace_id" \
+  name="思维导图" \
+  doc_type="MIND"
+
+# 创建文件夹
+mcporter call dingtalk-wiki.create_wiki_doc \
+  workspace_id="your_workspace_id" \
+  name="项目文档" \
+  doc_type="FOLDER"
+
+# 在指定目录下创建文档
+mcporter call dingtalk-wiki.create_wiki_doc \
+  workspace_id="your_workspace_id" \
+  name="周报" \
+  parent_node_id="folder_node_id"
+
+# 获取节点详情
+mcporter call dingtalk-wiki.get_wiki_node node_id="your_node_id"
+
+# 搜索知识库内容
+mcporter call dingtalk-wiki.search_wiki keyword="项目规划"
+
+# 在指定知识库内搜索
+mcporter call dingtalk-wiki.search_wiki keyword="项目规划" workspace_id="your_workspace_id"
 ```
 
-### 搜索知识库
+### AI 表格（Notable）
 
 ```bash
-mcporter call dingtalk-wiki.search_wiki keyword="项目规划"
+# 获取 AI 表格的所有数据表（base_id 通常就是 nodeId）
+mcporter call dingtalk-wiki.list_notable_sheets base_id="your_base_id"
+
+# 获取数据表中的记录
+mcporter call dingtalk-wiki.list_notable_records \
+  base_id="your_base_id" \
+  sheet_id="your_sheet_id"
+
+# 指定返回条数（默认 20）
+mcporter call dingtalk-wiki.list_notable_records \
+  base_id="your_base_id" \
+  sheet_id="your_sheet_id" \
+  max_results=100
+
+# 分页获取
+mcporter call dingtalk-wiki.list_notable_records \
+  base_id="your_base_id" \
+  sheet_id="your_sheet_id" \
+  next_token="your_next_token"
+```
+
+### 组织架构
+
+```bash
+# 列出根部门
+mcporter call dingtalk-wiki.list_departments
+
+# 列出指定部门下的子部门
+mcporter call dingtalk-wiki.list_departments dept_id=123456
+
+# 获取部门成员（默认每页 50 条）
+mcporter call dingtalk-wiki.get_department_users dept_id=123456
+
+# 分页获取部门成员
+mcporter call dingtalk-wiki.get_department_users dept_id=123456 cursor=0 size=100
+
+# 获取用户详情
+mcporter call dingtalk-wiki.get_user_info userid="your_user_id"
 ```
