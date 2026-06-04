@@ -19,7 +19,7 @@ const DINGTALK_API_V2 = 'https://api.dingtalk.com';
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const CACHE_DIR = path.join(os.homedir(), '.cache', 'dingtalk-wiki-mcp');
+const CACHE_DIR = path.join(os.homedir(), '.cache', 'dingtalk-wiki');
 const UNIONID_CACHE_PATH = path.join(CACHE_DIR, 'unionid-cache.json');
 
 if (!fs.existsSync(CACHE_DIR)) {
@@ -286,7 +286,7 @@ class DingTalkClient {
     return this.operatorId;
   }
 
-  async docRequest(method, pathName, { operatorId = null, data = null } = {}) {
+  async docRequest(method, pathName, { operatorId = null, data = null, extraParams = {} } = {}) {
     const token = await this.getAccessToken();
     const resolvedOperatorId = await this.resolveOperatorId(operatorId);
     const url = `${DINGTALK_API_V2}${pathName}`;
@@ -300,7 +300,8 @@ class DingTalkClient {
           'Content-Type': 'application/json'
         },
         params: {
-          operatorId: resolvedOperatorId
+          operatorId: resolvedOperatorId,
+          ...extraParams
         },
         data
       });
@@ -502,7 +503,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'search_wiki',
-        description: '搜索知识库（POST /v2.0/doc/search）',
+        description: '搜索知识库中的文档和文件夹（遍历目录树按名称匹配）',
         inputSchema: {
           type: 'object',
           properties: {
@@ -512,15 +513,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             workspace_id: {
               type: 'string',
-              description: '指定知识库 ID（可选）'
+              description: '指定知识库 ID（可选，不传则搜索所有知识库）'
             },
             max_results: {
               type: 'number',
-              description: '返回条数上限（默认 10，最大 20）'
-            },
-            next_token: {
-              type: 'string',
-              description: '分页游标（上次返回的 nextToken）'
+              description: '返回条数上限（默认 20，最大 50）'
             },
             operator_id: {
               type: 'string',
@@ -1120,37 +1117,94 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'search_wiki': {
-        const { keyword, workspace_id, max_results = 10, next_token, operator_id } = args;
+        const { keyword, workspace_id, max_results = 20, operator_id } = args;
+        if (!keyword) {
+          return {
+            content: [{ type: 'text', text: '⚠️ 请提供搜索关键词 keyword' }],
+            isError: true
+          };
+        }
+
+        const MAX_RESULTS = Math.min(max_results, 50);
         if (operator_id) {
           dingtalk.setOperatorId(operator_id);
         }
-        const body = {
-          keyword,
-          maxResults: Math.min(max_results, 20)
-        };
-        if (next_token) {
-          body.nextToken = next_token;
-        }
+
+        const wsResult = await dingtalk.wikiRequest('workspaces');
+        let workspaces = wsResult.workspaces || [];
         if (workspace_id) {
-          body.option = { workspaceIds: [workspace_id] };
+          workspaces = workspaces.filter(ws => ws.workspaceId === workspace_id);
         }
-        const result = await dingtalk.docRequest('POST', '/v2.0/doc/search', {
-          operatorId: operator_id || null,
-          data: body
+
+        if (workspaces.length === 0) {
+          return {
+            content: [{ type: 'text', text: '⚠️ 未找到可搜索的知识库' }],
+            isError: true
+          };
+        }
+
+        const matchedNodes = [];
+
+        for (const ws of workspaces) {
+          if (matchedNodes.length >= MAX_RESULTS) break;
+
+          const queue = [ws.rootNodeId];
+          const visited = new Set();
+
+          while (queue.length > 0 && matchedNodes.length < MAX_RESULTS) {
+            const dentryId = queue.shift();
+            if (!dentryId || visited.has(dentryId)) continue;
+            visited.add(dentryId);
+
+            try {
+              const result = await dingtalk.docRequest('GET', `/v2.0/doc/spaces/${ws.workspaceId}/directories`, {
+                operatorId: operator_id || null,
+                extraParams: dentryId !== ws.rootNodeId ? { dentryId, maxResults: 500 } : { maxResults: 500 }
+              });
+
+              const children = result.children || [];
+              for (const child of children) {
+                const name = child.name || '';
+                if (name.includes(keyword)) {
+                  matchedNodes.push({
+                    name,
+                    nodeId: child.dentryId || child.nodeId || child.id,
+                    workspaceId: ws.workspaceId,
+                    workspaceName: ws.name,
+                    type: child.contentType === 'folder' ? '文件夹' : '文档',
+                    url: child.url || '',
+                    hasChildren: child.hasChildren
+                  });
+                }
+                if (child.hasChildren && matchedNodes.length < MAX_RESULTS) {
+                  const childId = child.dentryId || child.nodeId || child.id;
+                  if (childId && !visited.has(childId)) {
+                    queue.push(childId);
+                  }
+                }
+              }
+            } catch (e) {
+              // 单个节点遍历失败跳过，不中断整体搜索
+            }
+          }
+        }
+
+        let output = `🔍 搜索 "${keyword}" (${matchedNodes.length}条)\n\n`;
+        matchedNodes.slice(0, MAX_RESULTS).forEach((item, i) => {
+          const icon = item.type === '文件夹' ? '📁' : '📄';
+          output += `${i + 1}. ${icon} ${item.name}\n`;
+          output += `   知识库: ${item.workspaceName} (${item.workspaceId})\n`;
+          if (item.url) output += `   链接: ${item.url}\n`;
+          output += '\n';
         });
-        const items = result.items || [];
-        let output = `🔍 搜索 "${keyword}" (${items.length}条)\n\n`;
-        items.forEach((item, i) => {
-          output += `${i + 1}. ${item.name}\n`;
-          output += `   知识库: ${item.workspaceId}\n`;
-          output += `   链接: ${item.url}\n\n`;
-        });
-        if (!items.length) {
-          output += '没有找到匹配的知识库。\n';
+
+        if (matchedNodes.length === 0) {
+          output += '没有找到匹配的文档或文件夹。\n';
+          output += `\n💡 此方式通过遍历目录树按名称匹配，非全文搜索。`;
+          output += `如需全文搜索，请在钉钉客户端中操作：\n`;
+          output += `https://alidocs.dingtalk.com/i/search?keyword=${encodeURIComponent(keyword)}`;
         }
-        if (result.nextToken) {
-          output += `--- 更多结果, nextToken: ${result.nextToken} ---\n`;
-        }
+
         return {
           content: [{ type: 'text', text: output }]
         };
