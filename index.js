@@ -481,6 +481,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             node_id: {
               type: 'string',
               description: '节点 ID'
+            },
+            operator_id: {
+              type: 'string',
+              description: '操作者 unionid（不传则使用默认用户）'
             }
           },
           required: ['node_id']
@@ -1074,13 +1078,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'get_wiki_node': {
-        const { node_id } = args;
-        // 通过搜索或其他方式获取节点详情
+        const { node_id, operator_id } = args;
+        if (operator_id) {
+          dingtalk.setOperatorId(operator_id);
+        }
+        const opId = await dingtalk.resolveOperatorId(operator_id || null);
+        const result = await dingtalk.docRequest('GET', `/v2.0/wiki/nodes/${node_id}`, {
+          operatorId: opId
+        });
+        const node = result;
+        let output = `📄 节点详情\n\n`;
+        output += `名称: ${node.name || '-'}\n`;
+        output += `ID: ${node.id || node.nodeId || '-'}\n`;
+        output += `类型: ${node.type || '-'}\n`;
+        output += `知识库 ID: ${node.workspaceId || '-'}\n`;
+        output += `父节点: ${node.parentNodeId || '-'}\n`;
+        output += `创建时间: ${node.createdTime || '-'}\n`;
+        output += `修改时间: ${node.modifiedTime || '-'}\n`;
+        output += `URL: ${node.url || '-'}\n`;
+        if (node.document) {
+          output += `文档信息: ${JSON.stringify(node.document)}\n`;
+        }
         return {
-          content: [{
-            type: 'text',
-            text: `📄 节点 ID: ${node_id}\n\n请使用 list_wiki_nodes 获取节点列表，然后通过节点链接访问详情。`
-          }]
+          content: [{ type: 'text', text: output }]
         };
       }
 
@@ -1397,7 +1417,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('钉钉 Wiki MCP Server 已启动 v2.0');
-  console.error(`Config path: ${CONFIG_PATH}`);
+  console.error(`Config via DINGTALK_WIKI_CONFIG env var`);
 }
 
 main().catch(console.error);
