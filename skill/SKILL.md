@@ -100,11 +100,17 @@ mcporter call dingtalk-wiki.delete_wiki_doc \
   workspace_id="your_workspace_id" \
   node_id="your_node_id"
 
-# 搜索知识库内容
+# 搜索知识库
 mcporter call dingtalk-wiki.search_wiki keyword="项目规划"
 
 # 在指定知识库内搜索
 mcporter call dingtalk-wiki.search_wiki keyword="项目规划" workspace_id="your_workspace_id"
+
+# 自定义返回条数
+mcporter call dingtalk-wiki.search_wiki keyword="项目规划" max_results=5
+
+# 分页搜索
+mcporter call dingtalk-wiki.search_wiki keyword="项目规划" next_token="your_next_token"
 ```
 
 ### AI 表格（Notable）
