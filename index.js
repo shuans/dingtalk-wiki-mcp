@@ -11,6 +11,8 @@ const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
 const { CallToolRequestSchema, ListToolsRequestSchema } = require('@modelcontextprotocol/sdk/types.js');
 const axios = require('axios');
+const MiniSearch = require('minisearch');
+const Database = require('better-sqlite3');
 const dotenv = require('dotenv');
 
 // 钉钉 API 配置
@@ -21,6 +23,7 @@ const path = require('path');
 const os = require('os');
 const CACHE_DIR = path.join(os.homedir(), '.cache', 'dingtalk-wiki');
 const UNIONID_CACHE_PATH = path.join(CACHE_DIR, 'unionid-cache.json');
+const SEARCH_INDEX_PATH = path.join(CACHE_DIR, 'search-index.sqlite');
 
 if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -41,6 +44,171 @@ function saveUnionIdCache() {
   } catch (e) {
     console.error('[钉钉MCP] 写入 unionId 缓存失败:', e.message);
   }
+}
+
+class WikiSearchIndex {
+  constructor() {
+    this.db = new Database(SEARCH_INDEX_PATH);
+    this.db.pragma('journal_mode = WAL');
+    this.db.exec(`CREATE TABLE IF NOT EXISTS docs (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL DEFAULT '',
+      content TEXT NOT NULL DEFAULT '',
+      workspaceId TEXT NOT NULL DEFAULT '',
+      workspaceName TEXT NOT NULL DEFAULT '',
+      url TEXT NOT NULL DEFAULT '',
+      type TEXT NOT NULL DEFAULT ''
+    )`);
+    this._insertStmt = this.db.prepare(`INSERT OR REPLACE INTO docs (id, title, content, workspaceId, workspaceName, url, type) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+    this._deleteStmt = this.db.prepare(`DELETE FROM docs WHERE id = ?`);
+    this._getStmt = this.db.prepare(`SELECT * FROM docs WHERE id = ?`);
+
+    this.index = new MiniSearch({
+      fields: ['title', 'content'],
+      storeFields: ['title', 'workspaceId', 'workspaceName', 'url', 'type'],
+    });
+
+    this._load();
+  }
+
+  _load() {
+    try {
+      const rows = this.db.prepare('SELECT id, title, content, workspaceId, workspaceName, url, type FROM docs').all();
+      for (const row of rows) {
+        this.index.add({
+          id: row.id, title: row.title, content: row.content,
+          workspaceId: row.workspaceId, workspaceName: row.workspaceName,
+          url: row.url, type: row.type,
+        });
+      }
+      console.error(`[钉钉MCP] 搜索索引已加载 (${rows.length} 篇文档)`);
+    } catch (e) {
+      console.error('[钉钉MCP] 加载搜索索引失败:', e.message);
+    }
+  }
+
+  add(docKey, data) {
+    this._insertStmt.run(docKey, data.title || '', data.content || '', data.workspaceId || '', data.workspaceName || '', data.url || '', data.type || '');
+    try {
+      this.index.add({ id: docKey, ...data });
+    } catch (e) {
+      console.error(`[钉钉MCP] 索引添加失败 [${docKey}]:`, e.message);
+    }
+  }
+
+  remove(docKey) {
+    this._deleteStmt.run(docKey);
+    try { this.index.remove({ id: docKey }); } catch (e) { /* not in index */ }
+  }
+
+  update(docKey, data) {
+    const existing = this._getStmt.get(docKey);
+    const merged = {
+      title: data.title ?? existing?.title ?? '',
+      content: data.content ?? existing?.content ?? '',
+      workspaceId: data.workspaceId ?? existing?.workspaceId ?? '',
+      workspaceName: data.workspaceName ?? existing?.workspaceName ?? '',
+      url: data.url ?? existing?.url ?? '',
+      type: data.type ?? existing?.type ?? '',
+    };
+    this._insertStmt.run(docKey, merged.title, merged.content, merged.workspaceId, merged.workspaceName, merged.url, merged.type);
+    try { this.index.remove({ id: docKey }); } catch (e) { /* ignore */ }
+    try {
+      this.index.add({ id: docKey, ...merged });
+    } catch (e) {
+      console.error(`[钉钉MCP] 索引更新失败 [${docKey}]:`, e.message);
+    }
+  }
+
+  search(keyword, maxResults = 20) {
+    const results = this.index.search(keyword, { prefix: true, fuzzy: 0.2 });
+    const top = results.slice(0, maxResults);
+    if (top.length === 0) return [];
+
+    const ids = top.map(r => r.id);
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = this.db.prepare(`SELECT * FROM docs WHERE id IN (${placeholders})`).all(...ids);
+    const rowMap = Object.fromEntries(rows.map(r => [r.id, r]));
+
+    return top.map(r => ({
+      id: r.id, score: r.score,
+      title: rowMap[r.id]?.title || '',
+      content: rowMap[r.id]?.content || '',
+      workspaceId: rowMap[r.id]?.workspaceId || '',
+      workspaceName: rowMap[r.id]?.workspaceName || '',
+      url: rowMap[r.id]?.url || '',
+      type: rowMap[r.id]?.type || '',
+    }));
+  }
+
+  get size() {
+    return this.db.prepare('SELECT COUNT(*) as c FROM docs').get().c;
+  }
+
+  clear() {
+    this.db.exec('DELETE FROM docs');
+    this.index = new MiniSearch({
+      fields: ['title', 'content'],
+      storeFields: ['title', 'workspaceId', 'workspaceName', 'url', 'type'],
+    });
+  }
+}
+
+async function rebuildSearchIndex() {
+  const wsResult = await dingtalk.wikiRequest('workspaces');
+  const workspaces = wsResult.workspaces || [];
+
+  wikiIndex.clear();
+  let total = 0;
+
+  for (const ws of workspaces) {
+    const queue = [ws.rootNodeId];
+    const visited = new Set();
+
+    while (queue.length > 0) {
+      const dentryId = queue.shift();
+      if (!dentryId || visited.has(dentryId)) continue;
+      visited.add(dentryId);
+
+      try {
+        const result = await dingtalk.docRequest('GET', `/v2.0/doc/spaces/${ws.workspaceId}/directories`, {
+          extraParams: dentryId !== ws.rootNodeId ? { dentryId, maxResults: 500 } : { maxResults: 500 }
+        });
+
+        const children = result.children || [];
+        for (const child of children) {
+          const childId = child.dentryId || child.nodeId || child.id;
+          const name = child.name || '';
+          const isFolder = child.contentType === 'folder';
+
+          if (!isFolder && childId) {
+            let content = '';
+            try {
+              const blocks = await dingtalk.docRequest('GET', `/v1.0/doc/suites/documents/${childId}/blocks`);
+              const blockData = blocks.result?.data || [];
+              content = blockData.map(b => extractBlockText(b)).join('\n\n');
+            } catch (e) { /* content unavailable */ }
+
+            wikiIndex.add(childId, {
+              title: name, content,
+              workspaceId: ws.workspaceId,
+              workspaceName: ws.name,
+              url: child.url || '',
+              type: child.contentType || 'DOC',
+            });
+            total++;
+          }
+
+          if (child.hasChildren && childId && !visited.has(childId)) {
+            queue.push(childId);
+          }
+        }
+      } catch (e) { /* skip errored nodes */ }
+    }
+  }
+
+  console.error(`[钉钉MCP] 搜索索引重建完成 (${total} 篇文档)`);
+  return total;
 }
 
 function loadEnvFile(filePath) {
@@ -378,6 +546,7 @@ class DingTalkClient {
 }
 
 const dingtalk = new DingTalkClient();
+const wikiIndex = new WikiSearchIndex();
 
 // MCP Server 定义
 const server = new Server(
@@ -503,7 +672,46 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'search_wiki',
-        description: '搜索知识库中的文档和文件夹（遍历目录树按名称匹配）',
+        description: '按名称搜索知识库中的文档和文件夹（遍历目录树，无需索引即可使用）',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            keyword: {
+              type: 'string',
+              description: '搜索关键词'
+            },
+            workspace_id: {
+              type: 'string',
+              description: '指定知识库 ID（可选，不传则搜索所有知识库）'
+            },
+            max_results: {
+              type: 'number',
+              description: '返回条数上限（默认 20，最大 50）'
+            },
+            operator_id: {
+              type: 'string',
+              description: '操作者 unionid（不传则使用默认用户）'
+            }
+          },
+          required: ['keyword']
+        }
+      },
+      {
+        name: 'refresh_search_index',
+        description: '全量重建搜索索引（遍历所有知识库读取文档内容，建立全文索引后 search_wiki_content 方可使用）',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            operator_id: {
+              type: 'string',
+              description: '操作者 unionid（不传则使用默认用户）'
+            }
+          }
+        }
+      },
+      {
+        name: 'search_wiki_content',
+        description: '全文搜索知识库文档内容（需先运行 refresh_search_index 建立索引）',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1052,6 +1260,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             lines.push(`📂 Workspace ID: ${doc.workspaceId}`);
           }
 
+          setImmediate(() => {
+            wikiIndex.add(doc.nodeId || doc.docKey, {
+              title: name,
+              content: args.content || '',
+              workspaceId: workspace_id || doc.workspaceId,
+              workspaceName: '',
+              url: doc.url || '',
+              type: doc_type,
+            });
+            if (args.content && doc.nodeId) {
+              dingtalk.docRequest('POST', `/v1.0/doc/suites/documents/${doc.nodeId}/overwriteContent`, {
+                data: { content: args.content, contentType: 'markdown' }
+              }).catch(() => {});
+            }
+          });
+
           return {
             content: [{
               type: 'text',
@@ -1125,11 +1349,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           };
         }
 
-        const MAX_RESULTS = Math.min(max_results, 50);
         if (operator_id) {
           dingtalk.setOperatorId(operator_id);
         }
 
+        const MAX_RESULTS = Math.min(max_results, 50);
         const wsResult = await dingtalk.wikiRequest('workspaces');
         let workspaces = wsResult.workspaces || [];
         if (workspace_id) {
@@ -1144,70 +1368,92 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         const matchedNodes = [];
-
         for (const ws of workspaces) {
           if (matchedNodes.length >= MAX_RESULTS) break;
-
           const queue = [ws.rootNodeId];
           const visited = new Set();
-
           while (queue.length > 0 && matchedNodes.length < MAX_RESULTS) {
             const dentryId = queue.shift();
             if (!dentryId || visited.has(dentryId)) continue;
             visited.add(dentryId);
-
             try {
               const result = await dingtalk.docRequest('GET', `/v2.0/doc/spaces/${ws.workspaceId}/directories`, {
-                operatorId: operator_id || null,
                 extraParams: dentryId !== ws.rootNodeId ? { dentryId, maxResults: 500 } : { maxResults: 500 }
               });
-
               const children = result.children || [];
               for (const child of children) {
                 const name = child.name || '';
                 if (name.includes(keyword)) {
-                  matchedNodes.push({
-                    name,
-                    nodeId: child.dentryId || child.nodeId || child.id,
-                    workspaceId: ws.workspaceId,
-                    workspaceName: ws.name,
-                    type: child.contentType === 'folder' ? '文件夹' : '文档',
-                    url: child.url || '',
-                    hasChildren: child.hasChildren
-                  });
+                  matchedNodes.push({ name, nodeId: child.dentryId || child.nodeId || child.id, workspaceId: ws.workspaceId, workspaceName: ws.name, type: child.contentType === 'folder' ? '文件夹' : '文档', url: child.url || '' });
                 }
-                if (child.hasChildren && matchedNodes.length < MAX_RESULTS) {
-                  const childId = child.dentryId || child.nodeId || child.id;
-                  if (childId && !visited.has(childId)) {
-                    queue.push(childId);
-                  }
-                }
+                const childId = child.dentryId || child.nodeId || child.id;
+                if (child.hasChildren && childId && !visited.has(childId)) queue.push(childId);
               }
-            } catch (e) {
-              // 单个节点遍历失败跳过，不中断整体搜索
-            }
+            } catch (e) { /* skip */ }
           }
         }
 
-        let output = `🔍 搜索 "${keyword}" (${matchedNodes.length}条)\n\n`;
+        let output = `🔍 搜索 "${keyword}" (${matchedNodes.length}条，按名称匹配)\n\n`;
         matchedNodes.slice(0, MAX_RESULTS).forEach((item, i) => {
           const icon = item.type === '文件夹' ? '📁' : '📄';
-          output += `${i + 1}. ${icon} ${item.name}\n`;
-          output += `   知识库: ${item.workspaceName} (${item.workspaceId})\n`;
+          output += `${i + 1}. ${icon} ${item.name}\n   知识库: ${item.workspaceName} (${item.workspaceId})\n`;
           if (item.url) output += `   链接: ${item.url}\n`;
           output += '\n';
         });
-
         if (matchedNodes.length === 0) {
           output += '没有找到匹配的文档或文件夹。\n';
-          output += `\n💡 此方式通过遍历目录树按名称匹配，非全文搜索。`;
-          output += `如需全文搜索，请在钉钉客户端中操作：\n`;
-          output += `https://alidocs.dingtalk.com/i/search?keyword=${encodeURIComponent(keyword)}`;
         }
 
-        return {
-          content: [{ type: 'text', text: output }]
-        };
+        return { content: [{ type: 'text', text: output }] };
+      }
+
+      case 'search_wiki_content': {
+        const { keyword, workspace_id, max_results = 20, operator_id } = args;
+        if (!keyword) {
+          return {
+            content: [{ type: 'text', text: '⚠️ 请提供搜索关键词 keyword' }],
+            isError: true
+          };
+        }
+
+        if (operator_id) {
+          dingtalk.setOperatorId(operator_id);
+        }
+
+        if (wikiIndex.size === 0) {
+          return {
+            content: [{
+              type: 'text',
+              text: '🔍 全文搜索索引为空，请先运行 refresh_search_index 工具遍历知识库建立索引。'
+            }]
+          };
+        }
+
+        const MAX_RESULTS = Math.min(max_results, 50);
+        let results = wikiIndex.search(keyword, MAX_RESULTS);
+        if (workspace_id) {
+          results = results.filter(r => r.workspaceId === workspace_id);
+        }
+
+        let output = `🔍 全文搜索 "${keyword}" (${results.length}条)\n\n`;
+        results.slice(0, MAX_RESULTS).forEach((item, i) => {
+          const icon = item.type === 'FOLDER' || item.type === 'folder' ? '📁' : '📄';
+          output += `${i + 1}. ${icon} ${item.title}\n`;
+          output += `   知识库: ${item.workspaceName} (${item.workspaceId})\n`;
+          output += `   匹配度: ${(item.score * 100).toFixed(0)}%\n`;
+          if (item.url) output += `   链接: ${item.url}\n`;
+          if (item.content) {
+            const preview = item.content.slice(0, 120).replace(/\n+/g, ' ');
+            output += `   内容预览: ${preview}${item.content.length > 120 ? '...' : ''}\n`;
+          }
+          output += '\n';
+        });
+
+        if (results.length === 0) {
+          output += '没有找到匹配的文档。\n';
+        }
+
+        return { content: [{ type: 'text', text: output }] };
       }
 
       case 'list_departments': {
@@ -1292,6 +1538,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           operatorId: operator_id || null,
           data: { content, contentType: 'markdown' }
         });
+        setImmediate(() => { wikiIndex.update(docKey, { content }); });
         return {
           content: [{ type: 'text', text: '✅ 文档内容已更新' }]
         };
@@ -1306,6 +1553,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           operatorId: operator_id || null,
           data: { name }
         });
+        setImmediate(() => { wikiIndex.update(node_id, { title: name }); });
         return {
           content: [{ type: 'text', text: `✅ 文档已重命名为: ${name}` }]
         };
@@ -1319,6 +1567,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         await dingtalk.docRequest('DELETE', `/v1.0/doc/workspaces/${workspace_id}/docs/${node_id}`, {
           operatorId: operator_id || null
         });
+        setImmediate(() => { wikiIndex.remove(node_id); });
         return {
           content: [{
             type: 'text',
@@ -1446,6 +1695,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [{
             type: 'text',
             text: `✅ 数据表已删除 (sheetId: ${sheet_id})`
+          }]
+        };
+      }
+
+      case 'refresh_search_index': {
+        const { operator_id } = args || {};
+        if (operator_id) {
+          dingtalk.setOperatorId(operator_id);
+        }
+        rebuildSearchIndex().catch(e => console.error('[钉钉MCP] 索引重建失败:', e.message));
+        return {
+          content: [{
+            type: 'text',
+            text: '🔄 搜索索引全量重建已启动（后台运行），完成后搜索将支持全文检索。\n\n这可能需要一些时间，取决于知识库中文档的数量和内容长度。'
           }]
         };
       }
