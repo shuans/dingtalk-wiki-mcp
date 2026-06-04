@@ -1,4 +1,4 @@
-# dingtalk-wiki-mcp
+# dingtalk-wiki
 
 [![Release](https://img.shields.io/github/v/release/ianen/dingtalk-wiki-mcp?display_name=tag)](https://github.com/ianen/dingtalk-wiki-mcp/releases)
 [![License](https://img.shields.io/github/license/ianen/dingtalk-wiki-mcp)](./LICENSE)
@@ -34,8 +34,8 @@
 {
   "mcpServers": {
     "dingtalk-wiki": {
-      "command": "node",
-      "args": ["/path/to/dingtalk-wiki-mcp/index.js"],
+      "command": "pnpx",
+      "args": ["dingtalk-wiki@latest"],
       "env": {
         "DINGTALK_APP_KEY": "your-app-key",
         "DINGTALK_APP_SECRET": "your-app-secret",
@@ -54,7 +54,7 @@
 | `DINGTALK_APP_SECRET` | 钉钉应用 AppSecret |
 | `DINGTALK_WIKI_CONFIG` | 用户/知识库配置（JSON 字符串），必填 |
 
-首次调用时程序自动通过 `userId` 获取 `unionId` 并缓存到 `~/.cache/dingtalk-wiki-mcp/`，后续启动不再重复请求。
+首次调用时程序自动通过 `userId` 获取 `unionId` 并缓存到 `~/.cache/dingtalk-wiki/`，后续启动不再重复请求。
 
 之后以 `dingtalk-wiki.工具名` 的方式调用（如 `dingtalk-wiki.list_wiki_workspaces`）。
 
@@ -108,14 +108,14 @@ npm start
 node index.js
 ```
 
-> `npx dingtalk-wiki-mcp` 是后续可扩展的分发路径。  
+> `npx dingtalk-wiki` 是后续可扩展的分发路径。  
 > 当前仓库已经具备正确的 CLI 入口（`bin`），但 npm 发布不在这次版本范围内。
 
 ---
 
 ## 官方 DingTalk MCP vs 本项目
 
-| 能力 | 钉钉官方 MCP | dingtalk-wiki-mcp |
+| 能力 | 钉钉官方 MCP | dingtalk-wiki |
 |---|---:|---:|
 | Wiki 读取 | 未覆盖 | ✅ |
 | Wiki 写入 | 未覆盖 | ✅ |

@@ -601,7 +601,7 @@ const wikiIndex = new WikiSearchIndex();
 // MCP Server 定义
 const server = new Server(
   {
-    name: 'dingtalk-wiki-mcp',
+    name: 'dingtalk-wiki',
     version: '1.1.0'
   },
   {

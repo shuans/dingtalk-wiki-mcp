@@ -1,4 +1,4 @@
-# dingtalk-wiki-mcp
+# dingtalk-wiki
 
 [![Release](https://img.shields.io/github/v/release/ianen/dingtalk-wiki-mcp?display_name=tag)](https://github.com/ianen/dingtalk-wiki-mcp/releases)
 [![License](https://img.shields.io/github/license/ianen/dingtalk-wiki-mcp)](./LICENSE)
@@ -34,8 +34,8 @@ All config goes into one JSON block — no local files needed:
 {
   "mcpServers": {
     "dingtalk-wiki": {
-      "command": "node",
-      "args": ["/path/to/dingtalk-wiki-mcp/index.js"],
+      "command": "pnpx",
+      "args": ["dingtalk-wiki@latest"],
       "env": {
         "DINGTALK_APP_KEY": "your-app-key",
         "DINGTALK_APP_SECRET": "your-app-secret",
@@ -53,7 +53,7 @@ All config goes into one JSON block — no local files needed:
 | `DINGTALK_APP_SECRET` | DingTalk App Secret |
 | `DINGTALK_WIKI_CONFIG` | User/workspace config (JSON string), required |
 
-On first call the server auto-fetches `unionId` via `userId` and caches it to `~/.cache/dingtalk-wiki-mcp/`.
+On first call the server auto-fetches `unionId` via `userId` and caches it to `~/.cache/dingtalk-wiki/`.
 
 Then call tools as `dingtalk-wiki.list_wiki_workspaces` (namespaced).
 
@@ -108,14 +108,14 @@ Or:
 node index.js
 ```
 
-> `npx dingtalk-wiki-mcp` is a future-friendly path after npm publishing.  
+> `pnpx dingtalk-wiki` is a future-friendly path after npm publishing.  
 > This repository already includes the correct CLI entry (`bin`), but npm distribution is not part of the current release yet.
 
 ---
 
 ## DingTalk official MCP vs this project
 
-| Capability                     |         DingTalk official MCP |       dingtalk-wiki-mcp |
+| Capability                     |         DingTalk official MCP |       dingtalk-wiki |
 | ------------------------------ | ----------------------------: | ----------------------: |
 | Wiki read                      |                   Not covered |                      ✅ |
 | Wiki write                     |                   Not covered |                      ✅ |
