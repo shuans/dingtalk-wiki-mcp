@@ -213,7 +213,28 @@ async function rebuildSearchIndex() {
               const blocks = await dingtalk.docRequest('GET', `/v1.0/doc/suites/documents/${childId}/blocks`);
               const blockData = blocks.result?.data || [];
               content = blockData.map(b => extractBlockText(b)).join('\n\n');
-            } catch (e) { /* content unavailable */ }
+            } catch (e) { /* content unavailable via blocks */ }
+
+            // Fallback: 存储 v1.0 下载 API（对上传的 .md 等文件有效）
+            if (!content && child.spaceId) {
+              try {
+                const token = await dingtalk.getAccessToken();
+                const dlRes = await axios({
+                  method: 'POST',
+                  url: `${DINGTALK_API_V2}/v1.0/storage/spaces/${child.spaceId}/dentries/${child.dentryId}/downloadInfos/query`,
+                  headers: { 'x-acs-dingtalk-access-token': token, 'Content-Type': 'application/json' },
+                  params: { unionId: await dingtalk.resolveOperatorId(null) },
+                  data: {}
+                });
+                const data = dlRes.data;
+                const downloadUrl = data.downloadInfo?.resourceUrl || data.resourceUrl || data.downloadUrl || data.url;
+                const downloadHeaders = data.downloadInfo?.headers || data.headers || {};
+                if (downloadUrl) {
+                  const contentRes = await axios({ method: 'GET', url: downloadUrl, headers: downloadHeaders, responseType: 'text' });
+                  content = contentRes.data;
+                }
+              } catch (e) { /* storage v1.0 unavailable */ }
+            }
 
             if (!content) {
               try {
@@ -510,7 +531,7 @@ class DingTalkClient {
     const url = `${DINGTALK_API_V2}${pathName}`;
 
     try {
-      const response = await axios({
+      const requestConfig = {
         method,
         url,
         headers: {
@@ -522,10 +543,16 @@ class DingTalkClient {
           ...extraParams
         },
         data
-      });
+      };
+      if (pathName.includes('blocks')) {
+        console.error(`[DEBUG] docRequest: ${method} ${url} operatorId=${resolvedOperatorId} extraParams=${JSON.stringify(extraParams)}`);
+      }
+      const response = await axios(requestConfig);
       return response.data;
     } catch (error) {
       if (error.response) {
+        const fullErr = JSON.stringify(error.response.data);
+        console.error(`[DEBUG] docRequest error (${pathName}): status=${error.response.status} data=${fullErr}`);
         throw new Error(`${error.response.data?.message || error.message} (code: ${error.response.data?.code})`);
       }
       throw error;
@@ -844,17 +871,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'get_wiki_doc_content',
-        description: '读取文档正文内容（返回 Block 结构，含标题、段落、表格等）',
+        description: '读取文档内容。对 .adoc 在线文档使用 blocks API；对上传的 .md 等文件使用存储下载 API（需 Storage.DownloadInfo.Read 权限）。',
         inputSchema: {
           type: 'object',
           properties: {
             doc_key: {
               type: 'string',
-              description: '文档标识。支持 wiki nodes 的 nodeId（dentryUuid）、docKey，或文档 URL。重要：create_wiki_doc 返回的 nodeId 不能用于内容读写，请使用 docKey 或 dentryUuid。若传入 create 的 nodeId，需额外提供 workspace_id 以自动查找'
+              description: '文档标识。支持 nodeId（dentryUuid）、docKey，或文档 URL。'
             },
             workspace_id: {
               type: 'string',
-              description: '知识库 ID（可选）。当 doc_key 来自 create_wiki_doc 返回的 nodeId 时，提供此参数可自动查找正确的 dentryUuid'
+              description: '知识库 ID（可选）。自动通过 wiki/nodes API 解析。'
             },
             operator_id: {
               type: 'string',
@@ -866,13 +893,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'update_wiki_doc_content',
-        description: '覆写文档正文内容（⚠️ 全量覆盖，不可撤销）',
+        description: '覆写 .adoc 在线文档正文内容（⚠️ 全量覆盖，不可撤销）。对上传的 .md 等文件不支持修改。',
         inputSchema: {
           type: 'object',
           properties: {
             doc_key: {
               type: 'string',
-              description: '文档标识。支持 wiki nodes 的 nodeId（dentryUuid）、docKey，或文档 URL。重要：create_wiki_doc 返回的 nodeId 不能用于内容读写，请使用 docKey 或 dentryUuid。若传入 create 的 nodeId，需额外提供 workspace_id 以自动查找'
+              description: '文档标识。支持 nodeId（dentryUuid）、docKey，或文档 URL。仅 .adoc 在线文档支持写入。'
             },
             content: {
               type: 'string',
@@ -1158,22 +1185,32 @@ async function resolveDocKey(docKey, operatorId, dingtalkInstance) {
   // 从 URL 中提取 ID
   const urlMatch = String(docKey).match(/\/i\/nodes\/([^\/\?#]+)/);
   docKey = urlMatch ? urlMatch[1] : docKey;
+  console.error(`[DEBUG] resolveDocKey: rawInput=${rawInput}, extracted=${docKey}`);
 
   try {
     const nodeInfo = await dingtalkInstance.docRequest('GET', `/v2.0/wiki/nodes/${docKey}`, { operatorId });
     const node = nodeInfo.node || nodeInfo;
+    console.error(`[DEBUG] resolveDocKey: wiki/nodes response keys=${Object.keys(node).join(',')}`);
+
+    // 缓存 workspaceId，供后续 fallback 使用
+    if (node.workspaceId) {
+      dingtalkInstance._resolvedWorkspaceId = node.workspaceId;
+    }
 
     // wiki/nodes 的 nodeId = dentryUuid，直接可用
     // 但 node.document.docKey 可能是不同的值，优先使用
     if (node.document?.docKey) {
+      console.error(`[DEBUG] resolveDocKey: found document.docKey=${node.document.docKey}`);
       return node.document.docKey;
     }
     // 部分响应直接把 docKey 放在顶层
     if (node.docKey) {
+      console.error(`[DEBUG] resolveDocKey: found top-level docKey=${node.docKey}`);
       return node.docKey;
     }
+    console.error(`[DEBUG] resolveDocKey: no docKey in response, returning raw docKey=${docKey}`);
   } catch (e) {
-    // 传入 create nodeId 时 wiki/nodes 会拒绝，静默 fallback
+    console.error(`[DEBUG] resolveDocKey: wiki/nodes failed: ${e.message}`);
   }
 
   return docKey;
@@ -1313,6 +1350,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           });
           
           const doc = response.data;
+          const nodeId = doc.nodeId || doc.id;
           const typeLabels = {
             DOC: '文档',
             WORKBOOK: '表格',
@@ -1332,7 +1370,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             '',
             `${typeIcon} ${name}`,
             `🗂️ 类型: ${doc_type}`,
-            `🆔 Node ID: ${doc.nodeId}`,
+            `🆔 Node ID: ${nodeId}`,
           ];
 
           if (doc.docKey) {
@@ -1349,7 +1387,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
 
           setImmediate(() => {
-            wikiIndex.add(doc.nodeId || doc.docKey, {
+            wikiIndex.add(nodeId || doc.docKey, {
               title: name,
               content: args.content || '',
               workspaceId: workspace_id || doc.workspaceId,
@@ -1357,7 +1395,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               url: doc.url || '',
               type: doc_type,
             });
-            const contentId = doc.docKey || doc.dentryUuid || doc.nodeId;
+            const contentId = doc.docKey || doc.dentryUuid || nodeId;
             if (args.content && contentId) {
               dingtalk.docRequest('POST', `/v1.0/doc/suites/documents/${contentId}/overwriteContent`, {
                 operatorId: opId,
@@ -1412,7 +1450,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const result = await dingtalk.docRequest('GET', `/v2.0/wiki/nodes/${node_id}`, {
           operatorId: operator_id || null
         });
-        const node = result;
+        const node = result.node || result;
         let output = `📄 节点详情\n\n`;
         output += `名称: ${node.name || '-'}\n`;
         output += `ID: ${node.id || node.nodeId || '-'}\n`;
@@ -1474,7 +1512,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               for (const child of children) {
                 const name = child.name || '';
                 if (name.includes(keyword)) {
-                  matchedNodes.push({ name, nodeId: child.dentryId || child.nodeId || child.id, workspaceId: ws.workspaceId, workspaceName: ws.name, type: child.contentType === 'folder' ? '文件夹' : '文档', url: child.url || '' });
+                  matchedNodes.push({ name, nodeId: child.dentryUuid || child.dentryId || child.nodeId || child.id, workspaceId: ws.workspaceId, workspaceName: ws.name, type: child.contentType === 'folder' ? '文件夹' : '文档', url: child.url || '' });
                 }
                 const childId = child.dentryId || child.nodeId || child.id;
                 if (child.hasChildren && childId && !visited.has(childId)) queue.push(childId);
@@ -1530,6 +1568,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const icon = item.type === 'FOLDER' || item.type === 'folder' ? '📁' : '📄';
           output += `${i + 1}. ${icon} ${item.title}\n`;
           output += `   知识库: ${item.workspaceName} (${item.workspaceId})\n`;
+          output += `   Node ID: ${item.id}\n`;
           output += `   匹配度: ${(item.score * 100).toFixed(0)}%\n`;
           if (item.url) output += `   链接: ${item.url}\n`;
           if (item.content) {
@@ -1601,40 +1640,112 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (operator_id) {
           dingtalk.setOperatorId(operator_id);
         }
+        dingtalk._resolvedWorkspaceId = null;
 
         let realDocKey = await resolveDocKey(docKey, operator_id || null, dingtalk);
+        console.error(`[DEBUG] get_wiki_doc_content: input=${docKey}, resolved=${realDocKey}`);
 
-        // 如果 resolve 后值没变（可能是 create 返回的 nodeId），尝试搜索 API 查找
-        if (realDocKey === docKey && workspaceId) {
-          try {
-            const searchRes = await dingtalk.docRequest('GET', `/v1.0/doc/docs`, {
-              operatorId: operator_id || null,
-              extraParams: { workspaceId, keyword: '', maxResults: 50 }
-            });
-            const docs = searchRes.docs || [];
-            const matched = docs.find(d => d.nodeBO?.nodeId === docKey || d.nodeBO?.nodeId === realDocKey) || docs[0];
-            if (matched?.nodeBO?.nodeId) {
-              realDocKey = matched.nodeBO.nodeId;
+        const effectiveWsId = workspaceId || dingtalk._resolvedWorkspaceId;
+
+        // 尝试 blocks API 读取 .adoc 在线文档内容
+        try {
+          const result = await dingtalk.docRequest('GET', `/v1.0/doc/suites/documents/${realDocKey}/blocks`, { operatorId: operator_id || null });
+          const blocks = result.result?.data || [];
+          let output = '';
+          blocks.forEach((block) => {
+            const text = extractBlockText(block);
+            output += text + '\n\n';
+          });
+          if (!blocks.length) {
+            output = '（文档为空或无可读内容）';
+          }
+          return {
+            content: [{
+              type: 'text',
+              text: output.trim()
+            }]
+          };
+        } catch (blocksErr) {
+          const isDocKeyIllegal = blocksErr.message.includes('doc key is illegal');
+
+          // Fallback: 尝试存储 v1.0 下载 API（对上传的 .md 等文件有效）
+          if (isDocKeyIllegal && effectiveWsId) {
+            try {
+              const token = await dingtalk.getAccessToken();
+              const opId = await dingtalk.resolveOperatorId(operator_id || null);
+
+              // BFS 遍历查找 dentry
+              const queue = [''];
+              const visited = new Set();
+              let foundDentry = null;
+              let foundSpaceId = null;
+              while (queue.length > 0 && !foundDentry) {
+                const parentId = queue.shift();
+                if (visited.has(parentId)) continue;
+                visited.add(parentId);
+                try {
+                  const dirParams = { operatorId: opId, maxResults: 500 };
+                  if (parentId) dirParams.dentryId = parentId;
+                  const dirRes = await axios({
+                    method: 'GET',
+                    url: `${DINGTALK_API_V2}/v2.0/doc/spaces/${effectiveWsId}/directories`,
+                    headers: { 'x-acs-dingtalk-access-token': token },
+                    params: dirParams
+                  });
+                  const children = dirRes.data?.children || [];
+                  for (const child of children) {
+                    if (child.dentryUuid === realDocKey || child.dentryId === realDocKey || child.id === realDocKey) {
+                      foundDentry = child;
+                      foundSpaceId = child.spaceId;
+                      break;
+                    }
+                    if (child.hasChildren && child.dentryId && !visited.has(child.dentryId)) {
+                      queue.push(child.dentryId);
+                    }
+                  }
+                } catch (e) { /* skip */ }
+              }
+
+              if (foundDentry && foundSpaceId) {
+                const dlRes = await axios({
+                  method: 'POST',
+                  url: `${DINGTALK_API_V2}/v1.0/storage/spaces/${foundSpaceId}/dentries/${foundDentry.dentryId}/downloadInfos/query`,
+                  headers: { 'x-acs-dingtalk-access-token': token, 'Content-Type': 'application/json' },
+                  params: { unionId: opId },
+                  data: {}
+                });
+                const data = dlRes.data;
+                const downloadUrl = data.downloadInfo?.resourceUrl || data.resourceUrl || data.downloadUrl || data.url;
+                const downloadHeaders = data.downloadInfo?.headers || data.headers || {};
+                if (downloadUrl) {
+                  const contentRes = await axios({ method: 'GET', url: downloadUrl, headers: downloadHeaders, responseType: 'text' });
+                  return {
+                    content: [{ type: 'text', text: contentRes.data }]
+                  };
+                }
+              }
+            } catch (fallbackErr) {
+              console.error(`[钉钉MCP] 存储 v1.0 fallback 失败: ${fallbackErr.message}`);
             }
-          } catch (e) { /* ignore */ }
-        }
+          }
 
-        const result = await dingtalk.docRequest('GET', `/v1.0/doc/suites/documents/${realDocKey}/blocks`, { operatorId: operator_id || null });
-        const blocks = result.result?.data || [];
-        let output = '';
-        blocks.forEach((block) => {
-          const text = extractBlockText(block);
-          output += text + '\n\n';
-        });
-        if (!blocks.length) {
-          output = '（文档为空或无可读内容）';
+          let hint = '';
+          if (isDocKeyIllegal) {
+            hint = `\n\n原因: 此文档不是 .adoc 在线文档，blocks API 无法读取。`;
+            if (effectiveWsId) {
+              hint += `\n已尝试存储 v1.0 下载 API 但仍失败（需开通 Storage.DownloadInfo.Read 权限）。`;
+            } else {
+              hint += `\n请提供 workspace_id 以尝试存储 v1.0 下载 API。`;
+            }
+          }
+          return {
+            content: [{
+              type: 'text',
+              text: `❌ 读取文档内容失败\n错误: ${blocksErr.message}${hint}\n\n调试信息:\n- 输入 doc_key: ${docKey}\n- 解析后 realDocKey: ${realDocKey}\n- workspaceId: ${effectiveWsId || '未提供'}\n- operator_id: ${operator_id || '未提供（将自动解析）'}`
+            }],
+            isError: true
+          };
         }
-        return {
-          content: [{
-            type: 'text',
-            text: output.trim()
-          }]
-        };
       }
 
       case 'update_wiki_doc_content': {
@@ -1645,24 +1756,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         let realDocKey = await resolveDocKey(docKey, operator_id || null, dingtalk);
 
-        if (realDocKey === docKey && workspaceId) {
-          try {
-            const searchRes = await dingtalk.docRequest('GET', `/v1.0/doc/docs`, {
-              operatorId: operator_id || null,
-              extraParams: { workspaceId, keyword: '', maxResults: 50 }
-            });
-            const docs = searchRes.docs || [];
-            const matched = docs.find(d => d.nodeBO?.nodeId === docKey || d.nodeBO?.nodeId === realDocKey) || docs[0];
-            if (matched?.nodeBO?.nodeId) {
-              realDocKey = matched.nodeBO.nodeId;
-            }
-          } catch (e) { /* ignore */ }
+        // 尝试 overwriteContent API 写入 .adoc 在线文档内容
+        try {
+          await dingtalk.docRequest('POST', `/v1.0/doc/suites/documents/${realDocKey}/overwriteContent`, {
+            operatorId: operator_id || null,
+            data: { content, contentType: 'markdown' }
+          });
+        } catch (e) {
+          const isDocKeyIllegal = e.message.includes('doc key is illegal');
+          let hint = '';
+          if (isDocKeyIllegal) {
+            hint = `\n\n原因: 此文档不是 .adoc 在线文档（可能是上传的 .md 文件），不支持修改。overwriteContent 仅对 .adoc 在线文档有效。`;
+          }
+          return {
+            content: [{ type: 'text', text: `❌ 写入文档内容失败\n${e.message}${hint}` }],
+            isError: true
+          };
         }
-
-        await dingtalk.docRequest('POST', `/v1.0/doc/suites/documents/${realDocKey}/overwriteContent`, {
-          operatorId: operator_id || null,
-          data: { content, contentType: 'markdown' }
-        });
         setImmediate(() => { wikiIndex.update(docKey, { content }); });
         return {
           content: [{ type: 'text', text: '✅ 文档内容已更新' }]
