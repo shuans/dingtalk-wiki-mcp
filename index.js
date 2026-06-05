@@ -850,7 +850,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             doc_key: {
               type: 'string',
-              description: '文档 docKey。wiki nodes 返回的 nodeId 本质是 dentryUuid，可直接用于此处'
+              description: '文档标识。支持 wiki nodes 的 nodeId（dentryUuid）、docKey，或文档 URL。重要：create_wiki_doc 返回的 nodeId 不能用于内容读写，请使用 docKey 或 dentryUuid。若传入 create 的 nodeId，需额外提供 workspace_id 以自动查找'
+            },
+            workspace_id: {
+              type: 'string',
+              description: '知识库 ID（可选）。当 doc_key 来自 create_wiki_doc 返回的 nodeId 时，提供此参数可自动查找正确的 dentryUuid'
             },
             operator_id: {
               type: 'string',
@@ -868,11 +872,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             doc_key: {
               type: 'string',
-              description: '文档 docKey。wiki nodes 返回的 nodeId 本质是 dentryUuid，可直接用于此处'
+              description: '文档标识。支持 wiki nodes 的 nodeId（dentryUuid）、docKey，或文档 URL。重要：create_wiki_doc 返回的 nodeId 不能用于内容读写，请使用 docKey 或 dentryUuid。若传入 create 的 nodeId，需额外提供 workspace_id 以自动查找'
             },
             content: {
               type: 'string',
               description: '要写入的 Markdown 内容'
+            },
+            workspace_id: {
+              type: 'string',
+              description: '知识库 ID（可选）。当 doc_key 来自 create_wiki_doc 返回的 nodeId 时，提供此参数可自动查找正确的 dentryUuid'
             },
             operator_id: {
               type: 'string',
@@ -1144,6 +1152,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
+async function resolveDocKey(docKey, operatorId, dingtalkInstance) {
+  const rawInput = docKey;
+
+  // 从 URL 中提取 ID
+  const urlMatch = String(docKey).match(/\/i\/nodes\/([^\/\?#]+)/);
+  docKey = urlMatch ? urlMatch[1] : docKey;
+
+  try {
+    const nodeInfo = await dingtalkInstance.docRequest('GET', `/v2.0/wiki/nodes/${docKey}`, { operatorId });
+    const node = nodeInfo.node || nodeInfo;
+
+    // wiki/nodes 的 nodeId = dentryUuid，直接可用
+    // 但 node.document.docKey 可能是不同的值，优先使用
+    if (node.document?.docKey) {
+      return node.document.docKey;
+    }
+    // 部分响应直接把 docKey 放在顶层
+    if (node.docKey) {
+      return node.docKey;
+    }
+  } catch (e) {
+    // 传入 create nodeId 时 wiki/nodes 会拒绝，静默 fallback
+  }
+
+  return docKey;
+}
+
 // 工具调用处理
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
@@ -1297,11 +1332,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             '',
             `${typeIcon} ${name}`,
             `🗂️ 类型: ${doc_type}`,
-            `🆔 Node ID: ${doc.nodeId}`
+            `🆔 Node ID: ${doc.nodeId}`,
           ];
 
           if (doc.docKey) {
-            lines.push(`🔑 DocKey: ${doc.docKey}`);
+            lines.push(`🔑 DocKey（用于内容读写）: ${doc.docKey}`);
+          }
+          if (doc.dentryUuid) {
+            lines.push(`📄 dentryUuid（用于内容读写）: ${doc.dentryUuid}`);
           }
           if (doc.url) {
             lines.push(`🔗 链接: ${doc.url}`);
@@ -1319,8 +1357,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               url: doc.url || '',
               type: doc_type,
             });
-            if (args.content && doc.nodeId) {
-              dingtalk.docRequest('POST', `/v1.0/doc/suites/documents/${doc.nodeId}/overwriteContent`, {
+            const contentId = doc.docKey || doc.dentryUuid || doc.nodeId;
+            if (args.content && contentId) {
+              dingtalk.docRequest('POST', `/v1.0/doc/suites/documents/${contentId}/overwriteContent`, {
+                operatorId: opId,
                 data: { content: args.content, contentType: 'markdown' }
               }).catch(() => {});
             }
@@ -1557,11 +1597,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'get_wiki_doc_content': {
-        const { doc_key: docKey, operator_id } = args;
+        const { doc_key: docKey, workspace_id: workspaceId, operator_id } = args;
         if (operator_id) {
           dingtalk.setOperatorId(operator_id);
         }
-        const result = await dingtalk.docRequest('GET', `/v1.0/doc/suites/documents/${docKey}/blocks`, { operatorId: operator_id || null });
+
+        let realDocKey = await resolveDocKey(docKey, operator_id || null, dingtalk);
+
+        // 如果 resolve 后值没变（可能是 create 返回的 nodeId），尝试搜索 API 查找
+        if (realDocKey === docKey && workspaceId) {
+          try {
+            const searchRes = await dingtalk.docRequest('GET', `/v1.0/doc/docs`, {
+              operatorId: operator_id || null,
+              extraParams: { workspaceId, keyword: '', maxResults: 50 }
+            });
+            const docs = searchRes.docs || [];
+            const matched = docs.find(d => d.nodeBO?.nodeId === docKey || d.nodeBO?.nodeId === realDocKey) || docs[0];
+            if (matched?.nodeBO?.nodeId) {
+              realDocKey = matched.nodeBO.nodeId;
+            }
+          } catch (e) { /* ignore */ }
+        }
+
+        const result = await dingtalk.docRequest('GET', `/v1.0/doc/suites/documents/${realDocKey}/blocks`, { operatorId: operator_id || null });
         const blocks = result.result?.data || [];
         let output = '';
         blocks.forEach((block) => {
@@ -1580,11 +1638,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'update_wiki_doc_content': {
-        const { doc_key: docKey, content, operator_id } = args;
+        const { doc_key: docKey, content, workspace_id: workspaceId, operator_id } = args;
         if (operator_id) {
           dingtalk.setOperatorId(operator_id);
         }
-        await dingtalk.docRequest('POST', `/v1.0/doc/suites/documents/${docKey}/overwriteContent`, {
+
+        let realDocKey = await resolveDocKey(docKey, operator_id || null, dingtalk);
+
+        if (realDocKey === docKey && workspaceId) {
+          try {
+            const searchRes = await dingtalk.docRequest('GET', `/v1.0/doc/docs`, {
+              operatorId: operator_id || null,
+              extraParams: { workspaceId, keyword: '', maxResults: 50 }
+            });
+            const docs = searchRes.docs || [];
+            const matched = docs.find(d => d.nodeBO?.nodeId === docKey || d.nodeBO?.nodeId === realDocKey) || docs[0];
+            if (matched?.nodeBO?.nodeId) {
+              realDocKey = matched.nodeBO.nodeId;
+            }
+          } catch (e) { /* ignore */ }
+        }
+
+        await dingtalk.docRequest('POST', `/v1.0/doc/suites/documents/${realDocKey}/overwriteContent`, {
           operatorId: operator_id || null,
           data: { content, contentType: 'markdown' }
         });
