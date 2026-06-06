@@ -1784,9 +1784,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (operator_id) {
           dingtalk.setOperatorId(operator_id);
         }
-        await dingtalk.docRequest('PATCH', `/v1.0/doc/workspaces/${workspace_id}/docs/${node_id}`, {
+        await dingtalk.docRequest('POST', `/v2.0/doc/spaces/${workspace_id}/dentries/${node_id}/rename`, {
           operatorId: operator_id || null,
-          data: { name }
+          extraParams: { name }
         });
         setImmediate(() => { wikiIndex.update(node_id, { title: name }); });
         return {
