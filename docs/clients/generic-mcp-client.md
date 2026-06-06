@@ -11,6 +11,7 @@ Many MCP clients support stdio-based servers with a configuration block similar 
       "env": {
         "DINGTALK_APP_KEY": "your-app-key",
         "DINGTALK_APP_SECRET": "your-app-secret"
+        "DINGTALK_WIKI_CONFIG": "{\"defaultUser\":\"me\",\"users\":{\"me\":{\"userId\":\"your-user-id\"}}}"
       }
     }
   }

@@ -35,7 +35,7 @@ All config goes into one JSON block — no local files needed:
   "mcpServers": {
     "dingtalk-wiki": {
       "command": "pnpx",
-      "args": ["dingtalk-wiki@latest"],
+      "args": ["--allow-build=better-sqlite3","dingtalk-wiki@latest"],
       "env": {
         "DINGTALK_APP_KEY": "your-app-key",
         "DINGTALK_APP_SECRET": "your-app-secret",
